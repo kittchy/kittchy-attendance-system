@@ -28,7 +28,7 @@ pub fn get_current_status(state: State<AppState>) -> Result<CurrentStatus, Strin
     let today = Local::now().format("%Y-%m-%d").to_string();
     let date_key = active_date_key.unwrap_or_else(|| today.clone());
 
-    let events = query_events_by_date(&db, &date_key).map_err(|e| e.to_string())?;
+    let events = query_latest_session_events(&db, &date_key).map_err(|e| e.to_string())?;
     let (status, clock_in_time) = derive_status(&events);
 
     Ok(CurrentStatus {
@@ -65,8 +65,8 @@ pub fn stamp(event_type: String, state: State<AppState>) -> Result<StampResult, 
         get_active_date_key(&db)?.ok_or_else(|| "出勤していません".to_string())?
     };
 
-    // 状態遷移の妥当性チェック
-    let events = query_events_by_date(&db, &date_key).map_err(|e| e.to_string())?;
+    // 状態遷移の妥当性チェック（最新セッションのイベントのみ）
+    let events = query_latest_session_events(&db, &date_key).map_err(|e| e.to_string())?;
     let (current_status, _) = derive_status(&events);
     validate_transition(&current_status, &event_type_enum)?;
 
@@ -106,7 +106,7 @@ pub fn get_today_events(state: State<AppState>) -> Result<Vec<StampEvent>, Strin
 
     // 今日のdate_keyまたはアクティブなdate_keyのイベントを取得
     let date_key = get_active_date_key(&db)?.unwrap_or(today);
-    query_events_by_date(&db, &date_key).map_err(|e| e.to_string())
+    query_latest_session_events(&db, &date_key).map_err(|e| e.to_string())
 }
 
 fn query_events_by_date(
@@ -131,23 +131,43 @@ fn query_events_by_date(
     Ok(events)
 }
 
+/// 最新セッション（最後のclock_in以降）のイベントのみを返す
+fn query_latest_session_events(
+    db: &rusqlite::Connection,
+    date_key: &str,
+) -> Result<Vec<StampEvent>, rusqlite::Error> {
+    let events = query_events_by_date(db, date_key)?;
+
+    // 最後のclock_inの位置を探す
+    let last_clock_in_pos = events
+        .iter()
+        .rposition(|e| e.event_type == "clock_in");
+
+    match last_clock_in_pos {
+        Some(pos) => Ok(events[pos..].to_vec()),
+        None => Ok(events),
+    }
+}
+
 /// アクティブな勤務セッションのdate_keyを取得（退勤していない最新のclock_in）
 fn get_active_date_key(db: &rusqlite::Connection) -> Result<Option<String>, String> {
-    // 最新のclock_inイベントを探す
-    let result: Result<Option<String>, _> = db.query_row(
-        "SELECT date_key FROM stamp_events WHERE event_type = 'clock_in' ORDER BY timestamp DESC LIMIT 1",
-        [],
-        |row| row.get(0),
-    ).optional();
+    // 最新のclock_inイベントのidとdate_keyを探す
+    let result: Result<Option<(i64, String)>, _> = db
+        .query_row(
+            "SELECT id, date_key FROM stamp_events WHERE event_type = 'clock_in' ORDER BY timestamp DESC LIMIT 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional();
 
-    let date_key = result.map_err(|e| e.to_string())?;
+    let row = result.map_err(|e| e.to_string())?;
 
-    if let Some(ref dk) = date_key {
-        // そのdate_keyにclock_outがあるか確認
+    if let Some((clock_in_id, date_key)) = row {
+        // その clock_in より後に clock_out があるか確認
         let has_clock_out: bool = db
             .query_row(
-                "SELECT COUNT(*) > 0 FROM stamp_events WHERE date_key = ?1 AND event_type = 'clock_out'",
-                rusqlite::params![dk],
+                "SELECT COUNT(*) > 0 FROM stamp_events WHERE id > ?1 AND date_key = ?2 AND event_type = 'clock_out'",
+                rusqlite::params![clock_in_id, date_key],
                 |row| row.get(0),
             )
             .map_err(|e| e.to_string())?;
@@ -155,9 +175,10 @@ fn get_active_date_key(db: &rusqlite::Connection) -> Result<Option<String>, Stri
         if has_clock_out {
             return Ok(None); // 退勤済み
         }
+        return Ok(Some(date_key));
     }
 
-    Ok(date_key)
+    Ok(None)
 }
 
 /// イベント列から勤務状態を導出する
@@ -177,6 +198,13 @@ fn derive_status(events: &[StampEvent]) -> (WorkStatus, Option<String>) {
         "break_start" => WorkStatus::OnBreak,
         "clock_out" => WorkStatus::Idle,
         _ => WorkStatus::Idle,
+    };
+
+    // 退勤済みの場合は出勤時刻を表示しない
+    let clock_in_time = if status == WorkStatus::Idle {
+        None
+    } else {
+        clock_in_time
     };
 
     (status, clock_in_time)

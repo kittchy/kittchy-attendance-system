@@ -24,3 +24,7 @@ export async function getSettings(): Promise<Record<string, string>> {
 export async function updateSetting(key: string, value: string): Promise<void> {
   return invoke("update_setting", { key, value });
 }
+
+export async function getMonthlySummary(year: number, month: number): Promise<string> {
+  return invoke("get_monthly_summary", { year, month });
+}

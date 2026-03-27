@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { DailyChart } from "../components/DailyChart";
+import { MonthlySummary } from "../components/MonthlySummary";
 import { SettingsDialog } from "../components/SettingsDialog";
 import { getDailyRecords } from "../lib/commands";
 import type { DailyRecord } from "../types";
@@ -93,6 +94,9 @@ export function HistoryPage({ onBack }: Props) {
       ) : (
         <DailyChart records={records} />
       )}
+
+      {/* サマリー */}
+      {!loading && <MonthlySummary year={year} month={month} />}
 
       {/* 設定ボタン */}
       <div style={{ marginTop: "32px", textAlign: "center" }}>
