@@ -5,9 +5,10 @@ import { eventTypeLabel, formatTime } from "../lib/formatters";
 
 interface Props {
   onNavigateHistory: () => void;
+  onNavigateSettings: () => void;
 }
 
-export function HomePage({ onNavigateHistory }: Props) {
+export function HomePage({ onNavigateHistory, onNavigateSettings }: Props) {
   const { status, events, loading, error, doStamp } = useAttendance();
 
   if (loading) {
@@ -16,9 +17,27 @@ export function HomePage({ onNavigateHistory }: Props) {
 
   return (
     <div style={{ padding: "32px", maxWidth: "480px", margin: "0 auto" }}>
-      <h1 style={{ fontSize: "20px", marginBottom: "24px", color: "#374151" }}>
-        Kittchy 勤怠管理
-      </h1>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "24px" }}>
+        <h1 style={{ fontSize: "20px", color: "#374151", margin: 0 }}>Kittchy 勤怠管理</h1>
+        <button
+          onClick={onNavigateSettings}
+          title="設定"
+          style={{
+            background: "none",
+            border: "none",
+            fontSize: "20px",
+            cursor: "pointer",
+            color: "#6b7280",
+            padding: "4px 8px",
+            borderRadius: "8px",
+            transition: "color 0.2s",
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.color = "#374151")}
+          onMouseLeave={(e) => (e.currentTarget.style.color = "#6b7280")}
+        >
+          ⚙
+        </button>
+      </div>
 
       <StatusBadge status={status} />
 

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { DailyChart } from "../components/DailyChart";
 import { MonthlySummary } from "../components/MonthlySummary";
-import { SettingsDialog } from "../components/SettingsDialog";
 import { getDailyRecords } from "../lib/commands";
 import type { DailyRecord } from "../types";
 
@@ -15,7 +14,6 @@ export function HistoryPage({ onBack }: Props) {
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [records, setRecords] = useState<DailyRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const fetchRecords = useCallback(async () => {
     setLoading(true);
@@ -97,26 +95,6 @@ export function HistoryPage({ onBack }: Props) {
 
       {/* サマリー */}
       {!loading && <MonthlySummary year={year} month={month} />}
-
-      {/* 設定ボタン */}
-      <div style={{ marginTop: "32px", textAlign: "center" }}>
-        <button
-          onClick={() => setSettingsOpen(true)}
-          style={{
-            background: "none",
-            border: "1px solid #d1d5db",
-            borderRadius: "8px",
-            padding: "8px 20px",
-            fontSize: "14px",
-            cursor: "pointer",
-            color: "#6b7280",
-          }}
-        >
-          ⚙ 設定
-        </button>
-      </div>
-
-      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }

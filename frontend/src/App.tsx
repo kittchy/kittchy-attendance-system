@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { HistoryPage } from "./pages/HistoryPage";
 import { HomePage } from "./pages/HomePage";
+import { SettingsPage } from "./pages/SettingsPage";
 
-type Page = "home" | "history";
+type Page = "home" | "history" | "settings";
 
 function App() {
   const [page, setPage] = useState<Page>("home");
@@ -11,7 +12,16 @@ function App() {
     return <HistoryPage onBack={() => setPage("home")} />;
   }
 
-  return <HomePage onNavigateHistory={() => setPage("history")} />;
+  if (page === "settings") {
+    return <SettingsPage onBack={() => setPage("home")} />;
+  }
+
+  return (
+    <HomePage
+      onNavigateHistory={() => setPage("history")}
+      onNavigateSettings={() => setPage("settings")}
+    />
+  );
 }
 
 export default App;
