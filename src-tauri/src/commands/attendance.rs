@@ -1,4 +1,5 @@
 use crate::db::models::{EventType, StampEvent, WorkStatus};
+use crate::slack;
 use crate::state::AppState;
 use chrono::Local;
 use serde::Serialize;
@@ -74,6 +75,22 @@ pub fn stamp(event_type: String, state: State<AppState>) -> Result<StampResult, 
         rusqlite::params![event_type_enum.as_str(), timestamp, date_key],
     )
     .map_err(|e| e.to_string())?;
+
+    // Slack通知（バックグラウンド、失敗してもブロックしない）
+    let slack_url: String = db
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'slack_webhook_url'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or_default();
+
+    if !slack_url.is_empty() {
+        let message = build_slack_message(&event_type_enum, &db, &date_key);
+        tokio::spawn(async move {
+            slack::send_slack_message(&slack_url, &message).await;
+        });
+    }
 
     Ok(StampResult {
         success: true,
@@ -183,6 +200,78 @@ fn validate_transition(current: &WorkStatus, event: &EventType) -> Result<(), St
             current, event
         ))
     }
+}
+
+/// Slack通知メッセージを組み立てる
+fn build_slack_message(
+    event_type: &EventType,
+    db: &rusqlite::Connection,
+    date_key: &str,
+) -> String {
+    match event_type {
+        EventType::ClockIn => {
+            let msg: String = db
+                .query_row(
+                    "SELECT value FROM settings WHERE key = 'slack_clock_in_message'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap_or_else(|_| "出勤しました".to_string());
+            msg
+        }
+        EventType::ClockOut => {
+            let msg: String = db
+                .query_row(
+                    "SELECT value FROM settings WHERE key = 'slack_clock_out_message'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap_or_else(|_| "退勤しました".to_string());
+
+            // 本日の勤務時間を計算
+            if let Ok(events) = query_events_by_date(db, date_key) {
+                if let Some(work_info) = calc_work_duration(&events) {
+                    return format!("{} (本日の勤務時間: {})", msg, work_info);
+                }
+            }
+            msg
+        }
+        EventType::BreakStart => "休憩に入ります".to_string(),
+        EventType::BreakEnd => "休憩から戻りました".to_string(),
+    }
+}
+
+/// イベント列から勤務時間文字列を計算する
+fn calc_work_duration(events: &[StampEvent]) -> Option<String> {
+    let clock_in = events.iter().find(|e| e.event_type == "clock_in")?;
+    let clock_out = events.iter().rev().find(|e| e.event_type == "clock_out")?;
+
+    let start = chrono::DateTime::parse_from_rfc3339(&clock_in.timestamp).ok()?;
+    let end = chrono::DateTime::parse_from_rfc3339(&clock_out.timestamp).ok()?;
+
+    let mut break_secs: i64 = 0;
+    let mut break_start: Option<chrono::DateTime<chrono::FixedOffset>> = None;
+    for event in events {
+        match event.event_type.as_str() {
+            "break_start" => {
+                break_start = chrono::DateTime::parse_from_rfc3339(&event.timestamp).ok();
+            }
+            "break_end" => {
+                if let (Some(bs), Ok(be)) =
+                    (break_start.take(), chrono::DateTime::parse_from_rfc3339(&event.timestamp))
+                {
+                    break_secs += (be - bs).num_seconds();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let total_secs = ((end - start).num_seconds() - break_secs).max(0);
+    let hours = total_secs / 3600;
+    let minutes = (total_secs % 3600) / 60;
+
+    Some(format!("{}時間{}分", hours, minutes))
 }
 
 use rusqlite::OptionalExtension;

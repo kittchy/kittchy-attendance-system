@@ -19,3 +19,15 @@ export interface StampResult {
   success: boolean;
   timestamp: string;
 }
+
+export interface DailyRecord {
+  date_key: string;
+  work_minutes: number;
+  break_minutes: number;
+}
+
+export interface Settings {
+  slack_webhook_url?: string;
+  slack_clock_in_message?: string;
+  slack_clock_out_message?: string;
+}

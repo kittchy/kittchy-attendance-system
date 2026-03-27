@@ -3,7 +3,11 @@ import { StatusBadge } from "../components/StatusBadge";
 import { useAttendance } from "../hooks/useAttendance";
 import { eventTypeLabel, formatTime } from "../lib/formatters";
 
-export function HomePage() {
+interface Props {
+  onNavigateHistory: () => void;
+}
+
+export function HomePage({ onNavigateHistory }: Props) {
   const { status, events, loading, error, doStamp } = useAttendance();
 
   if (loading) {
@@ -34,6 +38,23 @@ export function HomePage() {
           {error}
         </div>
       )}
+
+      <div style={{ marginBottom: "24px" }}>
+        <button
+          onClick={onNavigateHistory}
+          style={{
+            background: "none",
+            border: "1px solid #d1d5db",
+            borderRadius: "8px",
+            padding: "8px 20px",
+            fontSize: "14px",
+            cursor: "pointer",
+            color: "#6b7280",
+          }}
+        >
+          履歴・グラフ →
+        </button>
+      </div>
 
       {events.length > 0 && (
         <div>

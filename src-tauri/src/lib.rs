@@ -1,5 +1,6 @@
 mod commands;
 mod db;
+mod slack;
 mod state;
 
 use db::migrations::run_migrations;
@@ -43,6 +44,7 @@ pub fn run() {
             commands::attendance::get_today_events,
             commands::settings::get_settings,
             commands::settings::update_setting,
+            commands::summary::get_daily_records,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
