@@ -1,0 +1,46 @@
+import { useCallback, useEffect, useState } from "react";
+import { getCurrentStatus, getTodayEvents, stamp } from "../lib/commands";
+import type { CurrentStatus, EventType, StampEvent } from "../types";
+
+export function useAttendance() {
+  const [status, setStatus] = useState<CurrentStatus>({
+    status: "idle",
+    clock_in_time: null,
+    date_key: null,
+  });
+  const [events, setEvents] = useState<StampEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const [s, e] = await Promise.all([getCurrentStatus(), getTodayEvents()]);
+      setStatus(s);
+      setEvents(e);
+      setError(null);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const doStamp = useCallback(
+    async (eventType: EventType) => {
+      try {
+        setError(null);
+        await stamp(eventType);
+        await refresh();
+      } catch (err) {
+        setError(String(err));
+      }
+    },
+    [refresh]
+  );
+
+  return { status, events, loading, error, doStamp, refresh };
+}
