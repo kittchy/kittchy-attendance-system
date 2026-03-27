@@ -1,0 +1,99 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Get version from tauri.conf.json
+        id: version
+        run: |
+          VERSION=$(jq -r '.version' src-tauri/tauri.conf.json)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      - name: Check if release already exists
+        id: check_release
+        run: |
+          if gh release view "v${{ steps.version.outputs.version }}" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Tauri app
+        if: steps.check_release.outputs.exists == 'false'
+        run: cargo tauri build
+
+      - name: Create GitHub Release
+        if: steps.check_release.outputs.exists == 'false'
+        run: |
+          gh release create "v${{ steps.version.outputs.version }}" \
+            src-tauri/target/release/bundle/dmg/*.dmg \
+            --title "v${{ steps.version.outputs.version }}" \
+            --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Homebrew tap
+        if: steps.check_release.outputs.exists == 'false'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          DMG_FILE=$(ls src-tauri/target/release/bundle/dmg/*.dmg)
+          SHA256=$(shasum -a 256 "$DMG_FILE" | awk '{print $1}')
+
+          # homebrew-tap リポジトリをclone
+          git clone https://x-access-token:${{ secrets.TAP_TOKEN }}@github.com/kittchy/homebrew-tap.git /tmp/homebrew-tap
+          cd /tmp/homebrew-tap
+
+          # Cask formula を更新
+          cat > Casks/kittchy-attendance.rb << EOF
+          cask "kittchy-attendance" do
+            version "$VERSION"
+            sha256 "$SHA256"
+
+            url "https://github.com/kittchy/kittchy-attendance-system/releases/download/v#{version}/kittchy-attendance_#{version}_aarch64.dmg"
+            name "Kittchy Attendance"
+            desc "個人用勤怠管理デスクトップアプリ"
+            homepage "https://github.com/kittchy/kittchy-attendance-system"
+
+            app "kittchy-attendance.app"
+
+            zap trash: [
+              "~/Library/Application Support/com.kittchy.attendance",
+            ]
+          end
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/kittchy-attendance.rb
+          git commit -m "Update kittchy-attendance to v$VERSION" || exit 0
+          git push

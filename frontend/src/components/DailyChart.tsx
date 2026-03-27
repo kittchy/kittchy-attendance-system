@@ -31,7 +31,7 @@ export function DailyChart({ records }: Props) {
           <XAxis dataKey="date" fontSize={11} tickLine={false} />
           <YAxis fontSize={11} tickLine={false} unit="h" />
           <Tooltip
-            formatter={(value: number, name: string) => [`${value}h`, name]}
+            formatter={(value, name) => [`${value}h`, String(name)]}
             contentStyle={{ borderRadius: "8px", fontSize: "13px" }}
           />
           <Bar dataKey="勤務" fill="#22c55e" radius={[4, 4, 0, 0]} />
