@@ -26,6 +26,9 @@ jobs:
         with:
           workspaces: src-tauri
 
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --locked
+
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
@@ -64,36 +67,39 @@ jobs:
 
       - name: Update Homebrew tap
         if: steps.check_release.outputs.exists == 'false'
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           DMG_FILE=$(ls src-tauri/target/release/bundle/dmg/*.dmg)
           SHA256=$(shasum -a 256 "$DMG_FILE" | awk '{print $1}')
 
-          # homebrew-tap リポジトリをclone
-          git clone https://x-access-token:${{ secrets.TAP_TOKEN }}@github.com/kittchy/homebrew-tap.git /tmp/homebrew-tap
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/kittchy/homebrew-tap.git" /tmp/homebrew-tap
           cd /tmp/homebrew-tap
 
-          # Cask formula を更新
-          cat > Casks/kittchy-attendance.rb << EOF
-          cask "kittchy-attendance" do
-            version "$VERSION"
-            sha256 "$SHA256"
+          python3 -c "
+          content = '''cask \"kittchy-attendance\" do
+            version \"${VERSION}\"
+            sha256 \"${SHA256}\"
 
-            url "https://github.com/kittchy/kittchy-attendance-system/releases/download/v#{version}/kittchy-attendance_#{version}_aarch64.dmg"
-            name "Kittchy Attendance"
-            desc "個人用勤怠管理デスクトップアプリ"
-            homepage "https://github.com/kittchy/kittchy-attendance-system"
+            url \"https://github.com/kittchy/kittchy-attendance-system/releases/download/v#{version}/kittchy-attendance_#{version}_aarch64.dmg\"
+            name \"Kittchy Attendance\"
+            desc \"個人用勤怠管理デスクトップアプリ\"
+            homepage \"https://github.com/kittchy/kittchy-attendance-system\"
 
-            app "kittchy-attendance.app"
+            app \"kittchy-attendance.app\"
 
             zap trash: [
-              "~/Library/Application Support/com.kittchy.attendance",
+              \"~/Library/Application Support/com.kittchy.attendance\",
             ]
           end
-          EOF
+          '''
+          with open('Casks/kittchy-attendance.rb', 'w') as f:
+              f.write(content)
+          "
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Casks/kittchy-attendance.rb
-          git commit -m "Update kittchy-attendance to v$VERSION" || exit 0
+          git commit -m "Update kittchy-attendance to v${VERSION}" || exit 0
           git push
