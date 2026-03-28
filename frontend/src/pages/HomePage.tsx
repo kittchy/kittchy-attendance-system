@@ -1,7 +1,10 @@
+import { useState } from "react";
 import { ActionButton } from "../components/ActionButton";
 import { StatusBadge } from "../components/StatusBadge";
 import { useAttendance } from "../hooks/useAttendance";
+import { useWorkspaces } from "../hooks/useWorkspaces";
 import { eventTypeLabel, formatTime } from "../lib/formatters";
+import type { EventType } from "../types";
 
 interface Props {
   onNavigateHistory: () => void;
@@ -10,10 +13,24 @@ interface Props {
 
 export function HomePage({ onNavigateHistory, onNavigateSettings }: Props) {
   const { status, events, loading, error, doStamp } = useAttendance();
+  const { workspaces, loading: wsLoading } = useWorkspaces();
+  const [selectedWsId, setSelectedWsId] = useState<number | null>(null);
 
-  if (loading) {
+  if (loading || wsLoading) {
     return <div style={{ padding: "32px", textAlign: "center" }}>読み込み中...</div>;
   }
+
+  const handleStamp = (eventType: EventType) => {
+    if (eventType === "clock_in") {
+      // ワークスペースが1つだけなら自動選択、複数なら選択値を使用
+      const wsId = workspaces.length === 1 ? workspaces[0].id : (selectedWsId ?? workspaces[0]?.id);
+      doStamp(eventType, wsId);
+    } else {
+      doStamp(eventType);
+    }
+  };
+
+  const showWorkspaceSelector = status.status === "idle" && workspaces.length > 1;
 
   return (
     <div style={{ padding: "32px", maxWidth: "480px", margin: "0 auto" }}>
@@ -41,7 +58,40 @@ export function HomePage({ onNavigateHistory, onNavigateSettings }: Props) {
 
       <StatusBadge status={status} />
 
-      <ActionButton currentStatus={status.status} onStamp={doStamp} />
+      {/* ワークスペース選択（未出勤 かつ 2つ以上のWSがある場合のみ表示） */}
+      {showWorkspaceSelector && (
+        <div style={{ marginBottom: "16px" }}>
+          <label style={{ fontSize: "13px", color: "#6b7280", display: "block", marginBottom: "4px" }}>
+            ワークスペース
+          </label>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+            {workspaces.map((ws) => {
+              const isSelected = (selectedWsId ?? workspaces[0]?.id) === ws.id;
+              return (
+                <button
+                  key={ws.id}
+                  onClick={() => setSelectedWsId(ws.id)}
+                  style={{
+                    padding: "6px 16px",
+                    borderRadius: "8px",
+                    border: isSelected ? `2px solid ${ws.color}` : "1px solid #d1d5db",
+                    backgroundColor: isSelected ? `${ws.color}15` : "white",
+                    color: isSelected ? ws.color : "#6b7280",
+                    fontSize: "14px",
+                    fontWeight: isSelected ? "bold" : "normal",
+                    cursor: "pointer",
+                    transition: "all 0.15s",
+                  }}
+                >
+                  {ws.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <ActionButton currentStatus={status.status} onStamp={handleStamp} />
 
       {error && (
         <div

@@ -36,6 +36,7 @@ pub struct StampEvent {
     pub event_type: String,
     pub timestamp: String,
     pub date_key: String,
+    pub workspace_id: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -44,4 +45,15 @@ pub enum WorkStatus {
     Idle,
     Working,
     OnBreak,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Workspace {
+    pub id: i64,
+    pub name: String,
+    pub color: String,
+    pub slack_webhook_url: String,
+    pub slack_clock_in_message: String,
+    pub slack_clock_out_message: String,
+    pub sort_order: i64,
 }

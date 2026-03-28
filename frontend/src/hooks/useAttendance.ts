@@ -7,6 +7,8 @@ export function useAttendance() {
     status: "idle",
     clock_in_time: null,
     date_key: null,
+    workspace_id: null,
+    workspace_name: null,
   });
   const [events, setEvents] = useState<StampEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -30,16 +32,16 @@ export function useAttendance() {
   }, [refresh]);
 
   const doStamp = useCallback(
-    async (eventType: EventType) => {
+    async (eventType: EventType, workspaceId?: number) => {
       try {
         setError(null);
-        await stamp(eventType);
+        await stamp(eventType, workspaceId);
         await refresh();
       } catch (err) {
         setError(String(err));
       }
     },
-    [refresh]
+    [refresh],
   );
 
   return { status, events, loading, error, doStamp, refresh };

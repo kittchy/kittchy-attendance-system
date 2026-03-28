@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { DailyChart } from "../components/DailyChart";
 import { MonthlySummary } from "../components/MonthlySummary";
+import { useWorkspaces } from "../hooks/useWorkspaces";
 import { getDailyRecords } from "../lib/commands";
 import type { DailyRecord } from "../types";
 
@@ -14,16 +15,18 @@ export function HistoryPage({ onBack }: Props) {
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [records, setRecords] = useState<DailyRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const { workspaces } = useWorkspaces();
+  const [filterWsId, setFilterWsId] = useState<number | undefined>(undefined);
 
   const fetchRecords = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await getDailyRecords(year, month);
+      const r = await getDailyRecords(year, month, filterWsId);
       setRecords(r);
     } finally {
       setLoading(false);
     }
-  }, [year, month]);
+  }, [year, month, filterWsId]);
 
   useEffect(() => {
     fetchRecords();
@@ -65,6 +68,48 @@ export function HistoryPage({ onBack }: Props) {
         </button>
       </div>
 
+      {/* ワークスペースフィルタ（2つ以上ある場合のみ表示） */}
+      {workspaces.length > 1 && (
+        <div style={{ display: "flex", gap: "8px", marginBottom: "16px", flexWrap: "wrap" }}>
+          <button
+            onClick={() => setFilterWsId(undefined)}
+            style={{
+              padding: "4px 12px",
+              borderRadius: "6px",
+              border: filterWsId === undefined ? "2px solid #3b82f6" : "1px solid #d1d5db",
+              backgroundColor: filterWsId === undefined ? "#eff6ff" : "white",
+              color: filterWsId === undefined ? "#3b82f6" : "#6b7280",
+              fontSize: "13px",
+              fontWeight: filterWsId === undefined ? "bold" : "normal",
+              cursor: "pointer",
+            }}
+          >
+            すべて
+          </button>
+          {workspaces.map((ws) => {
+            const isActive = filterWsId === ws.id;
+            return (
+              <button
+                key={ws.id}
+                onClick={() => setFilterWsId(ws.id)}
+                style={{
+                  padding: "4px 12px",
+                  borderRadius: "6px",
+                  border: isActive ? `2px solid ${ws.color}` : "1px solid #d1d5db",
+                  backgroundColor: isActive ? `${ws.color}15` : "white",
+                  color: isActive ? ws.color : "#6b7280",
+                  fontSize: "13px",
+                  fontWeight: isActive ? "bold" : "normal",
+                  cursor: "pointer",
+                }}
+              >
+                {ws.name}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* 月選択 */}
       <div
         style={{
@@ -94,7 +139,7 @@ export function HistoryPage({ onBack }: Props) {
       )}
 
       {/* サマリー */}
-      {!loading && <MonthlySummary year={year} month={month} />}
+      {!loading && <MonthlySummary year={year} month={month} workspaceId={filterWsId} />}
     </div>
   );
 }

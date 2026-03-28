@@ -16,32 +16,12 @@ pub struct DailyRecord {
 pub fn get_daily_records(
     year: i32,
     month: u32,
+    workspace_id: Option<i64>,
     state: State<AppState>,
 ) -> Result<Vec<DailyRecord>, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
+    let events = query_month_events(&db, year, month, workspace_id)?;
 
-    let date_prefix = format!("{:04}-{:02}", year, month);
-    let mut stmt = db
-        .prepare(
-            "SELECT id, event_type, timestamp, date_key FROM stamp_events \
-             WHERE date_key LIKE ?1 ORDER BY date_key, timestamp ASC",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let events: Vec<StampEvent> = stmt
-        .query_map(rusqlite::params![format!("{}%", date_prefix)], |row| {
-            Ok(StampEvent {
-                id: row.get(0)?,
-                event_type: row.get(1)?,
-                timestamp: row.get(2)?,
-                date_key: row.get(3)?,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
-
-    // date_keyでグループ化
     let mut records: Vec<DailyRecord> = Vec::new();
     let mut current_key = String::new();
     let mut group: Vec<&StampEvent> = Vec::new();
@@ -67,87 +47,17 @@ pub fn get_daily_records(
     Ok(records)
 }
 
-/// 1日のイベント列から勤務時間・休憩時間を計算する
-fn calc_daily_record(date_key: &str, events: &[&StampEvent]) -> Option<DailyRecord> {
-    let clock_in = events.iter().find(|e| e.event_type == "clock_in")?;
-    let clock_out = events.iter().rev().find(|e| e.event_type == "clock_out");
-
-    let start = parse_timestamp(&clock_in.timestamp)?;
-    // clock_outがない場合: 当日のみ現在時刻で代替、過去日はスキップ
-    let end = clock_out.and_then(|e| parse_timestamp(&e.timestamp)).or_else(|| {
-        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-        if date_key == today {
-            Some(chrono::Local::now().fixed_offset())
-        } else {
-            None
-        }
-    })?;
-
-    let total_minutes = (end - start).num_seconds() as f64 / 60.0;
-
-    // 休憩時間の計算
-    let mut break_minutes = 0.0;
-    let mut break_start: Option<DateTime<FixedOffset>> = None;
-
-    for event in events {
-        match event.event_type.as_str() {
-            "break_start" => {
-                break_start = parse_timestamp(&event.timestamp);
-            }
-            "break_end" => {
-                if let (Some(bs), Some(be)) = (break_start.take(), parse_timestamp(&event.timestamp))
-                {
-                    break_minutes += (be - bs).num_seconds() as f64 / 60.0;
-                }
-            }
-            _ => {}
-        }
-    }
-    // 未閉じのbreak_startがある場合、退勤時刻（またはend）で補完
-    if let Some(bs) = break_start {
-        break_minutes += (end - bs).num_seconds().max(0) as f64 / 60.0;
-    }
-
-    let work_minutes = (total_minutes - break_minutes).max(0.0);
-
-    Some(DailyRecord {
-        date_key: date_key.to_string(),
-        work_minutes: (work_minutes * 10.0).round() / 10.0,
-        break_minutes: (break_minutes * 10.0).round() / 10.0,
-    })
-}
-
 /// 月次サマリーテキストを生成する
 #[tauri::command]
 pub fn get_monthly_summary(
     year: i32,
     month: u32,
+    workspace_id: Option<i64>,
     state: State<AppState>,
 ) -> Result<String, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
+    let events = query_month_events(&db, year, month, workspace_id)?;
 
-    let date_prefix = format!("{:04}-{:02}", year, month);
-    let mut stmt = db
-        .prepare(
-            "SELECT id, event_type, timestamp, date_key FROM stamp_events \
-             WHERE date_key LIKE ?1 ORDER BY date_key, timestamp ASC",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let events: Vec<StampEvent> = stmt
-        .query_map(rusqlite::params![format!("{}%", date_prefix)], |row| {
-            Ok(StampEvent {
-                id: row.get(0)?,
-                event_type: row.get(1)?,
-                timestamp: row.get(2)?,
-                date_key: row.get(3)?,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
-
-    // date_keyでグループ化
     let mut lines: Vec<String> = Vec::new();
     let mut total_work_secs: i64 = 0;
     let mut current_key = String::new();
@@ -177,7 +87,6 @@ pub fn get_monthly_summary(
         return Ok(format!("{}年{}月の勤務データはありません", year, month));
     }
 
-    // 合計時間
     let total_hours = total_work_secs / 3600;
     let total_minutes = (total_work_secs % 3600) / 60;
 
@@ -185,6 +94,103 @@ pub fn get_monthly_summary(
     lines.push(format!("{}時間{}分", total_hours, total_minutes));
 
     Ok(lines.join("\n"))
+}
+
+/// 月のイベントをクエリ（workspace_id でフィルタ可能）
+fn query_month_events(
+    db: &rusqlite::Connection,
+    year: i32,
+    month: u32,
+    workspace_id: Option<i64>,
+) -> Result<Vec<StampEvent>, String> {
+    let date_prefix = format!("{:04}-{:02}", year, month);
+
+    let map_row = |row: &rusqlite::Row| -> rusqlite::Result<StampEvent> {
+        Ok(StampEvent {
+            id: row.get(0)?,
+            event_type: row.get(1)?,
+            timestamp: row.get(2)?,
+            date_key: row.get(3)?,
+            workspace_id: row.get(4)?,
+        })
+    };
+
+    if let Some(ws_id) = workspace_id {
+        let mut stmt = db
+            .prepare(
+                "SELECT id, event_type, timestamp, date_key, workspace_id FROM stamp_events \
+                 WHERE date_key LIKE ?1 AND workspace_id = ?2 ORDER BY date_key, timestamp ASC",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let events = stmt
+            .query_map(rusqlite::params![format!("{}%", date_prefix), ws_id], map_row)
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        Ok(events)
+    } else {
+        let mut stmt = db
+            .prepare(
+                "SELECT id, event_type, timestamp, date_key, workspace_id FROM stamp_events \
+                 WHERE date_key LIKE ?1 ORDER BY date_key, timestamp ASC",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let events = stmt
+            .query_map(rusqlite::params![format!("{}%", date_prefix)], map_row)
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        Ok(events)
+    }
+}
+
+/// 1日のイベント列から勤務時間・休憩時間を計算する
+fn calc_daily_record(date_key: &str, events: &[&StampEvent]) -> Option<DailyRecord> {
+    let clock_in = events.iter().find(|e| e.event_type == "clock_in")?;
+    let clock_out = events.iter().rev().find(|e| e.event_type == "clock_out");
+
+    let start = parse_timestamp(&clock_in.timestamp)?;
+    let end = clock_out.and_then(|e| parse_timestamp(&e.timestamp)).or_else(|| {
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        if date_key == today {
+            Some(chrono::Local::now().fixed_offset())
+        } else {
+            None
+        }
+    })?;
+
+    let total_minutes = (end - start).num_seconds() as f64 / 60.0;
+
+    let mut break_minutes = 0.0;
+    let mut break_start: Option<DateTime<FixedOffset>> = None;
+
+    for event in events {
+        match event.event_type.as_str() {
+            "break_start" => {
+                break_start = parse_timestamp(&event.timestamp);
+            }
+            "break_end" => {
+                if let (Some(bs), Some(be)) = (break_start.take(), parse_timestamp(&event.timestamp))
+                {
+                    break_minutes += (be - bs).num_seconds() as f64 / 60.0;
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(bs) = break_start {
+        break_minutes += (end - bs).num_seconds().max(0) as f64 / 60.0;
+    }
+
+    let work_minutes = (total_minutes - break_minutes).max(0.0);
+
+    Some(DailyRecord {
+        date_key: date_key.to_string(),
+        work_minutes: (work_minutes * 10.0).round() / 10.0,
+        break_minutes: (break_minutes * 10.0).round() / 10.0,
+    })
 }
 
 /// 1日分のサマリー行を生成する。(行テキスト, 実労働秒数) を返す
@@ -195,7 +201,6 @@ fn format_daily_summary(date_key: &str, events: &[&StampEvent]) -> Option<(Strin
     let start = parse_timestamp(&clock_in.timestamp)?;
     let end = parse_timestamp(&clock_out.timestamp)?;
 
-    // 休憩時間
     let mut break_secs: i64 = 0;
     let mut break_start: Option<DateTime<FixedOffset>> = None;
     for event in events {
@@ -213,7 +218,6 @@ fn format_daily_summary(date_key: &str, events: &[&StampEvent]) -> Option<(Strin
             _ => {}
         }
     }
-    // 未閉じのbreak_startがある場合、退勤時刻で補完
     if let Some(bs) = break_start {
         break_secs += (end - bs).num_seconds().max(0);
     }
@@ -222,7 +226,6 @@ fn format_daily_summary(date_key: &str, events: &[&StampEvent]) -> Option<(Strin
     let work_hours = work_secs / 3600;
     let work_minutes = (work_secs % 3600) / 60;
 
-    // 日付フォーマット: "3/25(Wed)"
     let date = NaiveDate::parse_from_str(date_key, "%Y-%m-%d").ok()?;
     let weekday = match date.weekday() {
         chrono::Weekday::Mon => "Mon",
@@ -235,7 +238,6 @@ fn format_daily_summary(date_key: &str, events: &[&StampEvent]) -> Option<(Strin
     };
     let date_str = format!("{}/{}({})", date.month(), date.day(), weekday);
 
-    // 時刻フォーマット
     let start_time = start.format("%H:%M:%S");
     let end_time = end.format("%H:%M:%S");
 

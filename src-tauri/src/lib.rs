@@ -96,6 +96,10 @@ pub fn run() {
             commands::settings::update_setting,
             commands::summary::get_daily_records,
             commands::summary::get_monthly_summary,
+            commands::workspace::list_workspaces,
+            commands::workspace::create_workspace,
+            commands::workspace::update_workspace,
+            commands::workspace::delete_workspace,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

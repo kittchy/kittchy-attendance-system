@@ -21,6 +21,11 @@ export function StatusBadge({ status }: Props) {
         }}
       />
       <span style={{ fontSize: "24px", fontWeight: "bold" }}>{label}</span>
+      {status.workspace_name && status.status !== "idle" && (
+        <span style={{ fontSize: "14px", color: "#6b7280", backgroundColor: "#f3f4f6", padding: "2px 8px", borderRadius: "4px" }}>
+          {status.workspace_name}
+        </span>
+      )}
       {status.clock_in_time && (
         <span style={{ fontSize: "16px", color: "#6b7280" }}>
           {formatTime(status.clock_in_time)} から

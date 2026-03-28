@@ -4,9 +4,10 @@ import { getMonthlySummary } from "../lib/commands";
 interface Props {
   year: number;
   month: number;
+  workspaceId?: number;
 }
 
-export function MonthlySummary({ year, month }: Props) {
+export function MonthlySummary({ year, month, workspaceId }: Props) {
   const [summary, setSummary] = useState("");
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [loading, setLoading] = useState(true);
@@ -15,12 +16,12 @@ export function MonthlySummary({ year, month }: Props) {
   const fetchSummary = useCallback(async () => {
     setLoading(true);
     try {
-      const s = await getMonthlySummary(year, month);
+      const s = await getMonthlySummary(year, month, workspaceId);
       setSummary(s);
     } finally {
       setLoading(false);
     }
-  }, [year, month]);
+  }, [year, month, workspaceId]);
 
   useEffect(() => {
     fetchSummary();
