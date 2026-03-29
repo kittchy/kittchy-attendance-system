@@ -21,6 +21,111 @@ pub struct StampResult {
     pub timestamp: String,
 }
 
+/// DB接続から直接ステータスを取得する（トレイメニュー構築用）
+pub fn get_current_status_from_db(db: &rusqlite::Connection) -> Result<CurrentStatus, String> {
+    let active = get_active_session(db)?;
+    let today = Local::now().format("%Y-%m-%d").to_string();
+
+    match active {
+        Some((date_key, workspace_id)) => {
+            let events = query_latest_session_events(db, &date_key, workspace_id)
+                .map_err(|e| e.to_string())?;
+            let (status, clock_in_time) = derive_status(&events);
+
+            let ws_name: Option<String> = db
+                .query_row(
+                    "SELECT name FROM workspaces WHERE id = ?1",
+                    rusqlite::params![workspace_id],
+                    |row| row.get(0),
+                )
+                .ok();
+
+            Ok(CurrentStatus {
+                status,
+                clock_in_time,
+                date_key: Some(date_key),
+                workspace_id: Some(workspace_id),
+                workspace_name: ws_name,
+            })
+        }
+        None => Ok(CurrentStatus {
+            status: WorkStatus::Idle,
+            clock_in_time: None,
+            date_key: Some(today),
+            workspace_id: None,
+            workspace_name: None,
+        }),
+    }
+}
+
+/// DB接続から直接打刻する（トレイメニュー用）
+pub fn stamp_from_db(
+    db: &rusqlite::Connection,
+    event_type_str: &str,
+    workspace_id: Option<i64>,
+) -> Result<StampResult, String> {
+    let event_type_enum =
+        EventType::from_str(event_type_str).ok_or_else(|| format!("不正なイベント種別: {}", event_type_str))?;
+
+    let now = Local::now();
+    let timestamp = now.to_rfc3339();
+
+    let active = get_active_session(db)?;
+
+    let (ws_id, date_key) = if event_type_enum == EventType::ClockIn {
+        if active.is_some() {
+            return Err("既にアクティブなセッションがあります".to_string());
+        }
+        let ws_id = workspace_id.unwrap_or(1);
+        let exists: bool = db
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM workspaces WHERE id = ?1",
+                rusqlite::params![ws_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if !exists {
+            return Err("ワークスペースが見つかりません".to_string());
+        }
+        (ws_id, now.format("%Y-%m-%d").to_string())
+    } else {
+        let (active_key, active_ws_id) =
+            active.ok_or_else(|| "出勤していません".to_string())?;
+        (active_ws_id, active_key)
+    };
+
+    let events = query_latest_session_events(db, &date_key, ws_id).map_err(|e| e.to_string())?;
+    let (current_status, _) = derive_status(&events);
+    validate_transition(&current_status, &event_type_enum)?;
+
+    db.execute(
+        "INSERT INTO stamp_events (event_type, timestamp, date_key, workspace_id) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![event_type_enum.as_str(), timestamp, date_key, ws_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Slack通知
+    let slack_url: String = db
+        .query_row(
+            "SELECT slack_webhook_url FROM workspaces WHERE id = ?1",
+            rusqlite::params![ws_id],
+            |row| row.get(0),
+        )
+        .unwrap_or_default();
+
+    if !slack_url.is_empty() {
+        let message = build_slack_message(&event_type_enum, db, &date_key, ws_id);
+        tokio::spawn(async move {
+            slack::send_slack_message(&slack_url, &message).await;
+        });
+    }
+
+    Ok(StampResult {
+        success: true,
+        timestamp,
+    })
+}
+
 /// 現在の勤務状態を取得する（全ワークスペースを横断してアクティブセッションを探す）
 #[tauri::command]
 pub fn get_current_status(state: State<AppState>) -> Result<CurrentStatus, String> {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentStatus, getTodayEvents, stamp } from "../lib/commands";
 import type { CurrentStatus, EventType, StampEvent } from "../types";
 
@@ -29,6 +30,16 @@ export function useAttendance() {
 
   useEffect(() => {
     refresh();
+  }, [refresh]);
+
+  // トレイから打刻された場合にUIを更新
+  useEffect(() => {
+    const unlisten = listen("attendance-changed", () => {
+      refresh();
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
   }, [refresh]);
 
   const doStamp = useCallback(
