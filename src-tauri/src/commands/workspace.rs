@@ -41,7 +41,11 @@ pub fn create_workspace(
 
     // sort_order は既存の最大値 + 1
     let max_order: i64 = db
-        .query_row("SELECT COALESCE(MAX(sort_order), 0) FROM workspaces", [], |row| row.get(0))
+        .query_row(
+            "SELECT COALESCE(MAX(sort_order), 0) FROM workspaces",
+            [],
+            |row| row.get(0),
+        )
         .map_err(|e| e.to_string())?;
 
     db.execute(
@@ -79,7 +83,14 @@ pub fn update_workspace(
         .execute(
             "UPDATE workspaces SET name = ?1, color = ?2, slack_webhook_url = ?3, \
              slack_clock_in_message = ?4, slack_clock_out_message = ?5 WHERE id = ?6",
-            rusqlite::params![name, color, slack_webhook_url, slack_clock_in_message, slack_clock_out_message, id],
+            rusqlite::params![
+                name,
+                color,
+                slack_webhook_url,
+                slack_clock_in_message,
+                slack_clock_out_message,
+                id
+            ],
         )
         .map_err(|e| e.to_string())?;
 
@@ -107,8 +118,11 @@ pub fn delete_workspace(id: i64, state: State<AppState>) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
 
-    tx.execute("DELETE FROM workspaces WHERE id = ?1", rusqlite::params![id])
-        .map_err(|e| e.to_string())?;
+    tx.execute(
+        "DELETE FROM workspaces WHERE id = ?1",
+        rusqlite::params![id],
+    )
+    .map_err(|e| e.to_string())?;
 
     tx.commit().map_err(|e| e.to_string())?;
 

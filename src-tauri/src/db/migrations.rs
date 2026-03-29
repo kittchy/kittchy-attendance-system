@@ -37,7 +37,9 @@ pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
 
     // stamp_events に workspace_id カラムを追加（既存テーブルの場合）
     let has_workspace_id: bool = conn
-        .prepare("SELECT COUNT(*) FROM pragma_table_info('stamp_events') WHERE name = 'workspace_id'")?
+        .prepare(
+            "SELECT COUNT(*) FROM pragma_table_info('stamp_events') WHERE name = 'workspace_id'",
+        )?
         .query_row([], |row| row.get(0))?;
 
     if !has_workspace_id {

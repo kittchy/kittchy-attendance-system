@@ -124,7 +124,10 @@ fn query_month_events(
             .map_err(|e| e.to_string())?;
 
         let events = stmt
-            .query_map(rusqlite::params![format!("{}%", date_prefix), ws_id], map_row)
+            .query_map(
+                rusqlite::params![format!("{}%", date_prefix), ws_id],
+                map_row,
+            )
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
@@ -152,14 +155,16 @@ fn calc_daily_record(date_key: &str, events: &[&StampEvent]) -> Option<DailyReco
     let clock_out = events.iter().rev().find(|e| e.event_type == "clock_out");
 
     let start = parse_timestamp(&clock_in.timestamp)?;
-    let end = clock_out.and_then(|e| parse_timestamp(&e.timestamp)).or_else(|| {
-        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-        if date_key == today {
-            Some(chrono::Local::now().fixed_offset())
-        } else {
-            None
-        }
-    })?;
+    let end = clock_out
+        .and_then(|e| parse_timestamp(&e.timestamp))
+        .or_else(|| {
+            let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+            if date_key == today {
+                Some(chrono::Local::now().fixed_offset())
+            } else {
+                None
+            }
+        })?;
 
     let total_minutes = (end - start).num_seconds() as f64 / 60.0;
 
@@ -172,7 +177,8 @@ fn calc_daily_record(date_key: &str, events: &[&StampEvent]) -> Option<DailyReco
                 break_start = parse_timestamp(&event.timestamp);
             }
             "break_end" => {
-                if let (Some(bs), Some(be)) = (break_start.take(), parse_timestamp(&event.timestamp))
+                if let (Some(bs), Some(be)) =
+                    (break_start.take(), parse_timestamp(&event.timestamp))
                 {
                     break_minutes += (be - bs).num_seconds() as f64 / 60.0;
                 }
