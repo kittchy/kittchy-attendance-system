@@ -63,7 +63,6 @@ export function useAttendance() {
 
   const doUpdateEvent = useCallback(
     async (id: number, newTimestamp: string) => {
-      setError(null);
       await updateEvent(id, newTimestamp);
       await refresh();
     },
@@ -72,7 +71,6 @@ export function useAttendance() {
 
   const doDeleteEvent = useCallback(
     async (id: number) => {
-      setError(null);
       await deleteEvent(id);
       await refresh();
     },

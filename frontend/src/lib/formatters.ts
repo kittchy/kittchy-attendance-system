@@ -66,14 +66,12 @@ export function replaceTimeInTimestamp(
   if (match) {
     return `${match[1]}T${newTime}${match[2]}`;
   }
-  // フォールバック: ローカルタイムゾーンで組み立て
+  // フォールバック: 元のタイムスタンプから日付部分を取得し、ローカルTZで組み立て
+  const dateStr = originalTimestamp.split("T")[0];
   const date = new Date(originalTimestamp);
-  const [h, m, s] = newTime.split(":").map(Number);
-  date.setHours(h, m, s, 0);
   const tzOffset = -date.getTimezoneOffset();
   const sign = tzOffset >= 0 ? "+" : "-";
   const tzH = String(Math.floor(Math.abs(tzOffset) / 60)).padStart(2, "0");
   const tzM = String(Math.abs(tzOffset) % 60).padStart(2, "0");
-  const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   return `${dateStr}T${newTime}${sign}${tzH}:${tzM}`;
 }

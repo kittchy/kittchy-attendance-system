@@ -536,8 +536,12 @@ pub fn update_event(
         }
     }
 
-    // timestamp 昇順でソート
-    events.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+    // timestamp 昇順でソート（DateTime でパースして比較）
+    events.sort_by(|a, b| {
+        let ta = DateTime::parse_from_rfc3339(&a.timestamp).unwrap_or_default();
+        let tb = DateTime::parse_from_rfc3339(&b.timestamp).unwrap_or_default();
+        ta.cmp(&tb)
+    });
 
     validate_event_order(&events)?;
 

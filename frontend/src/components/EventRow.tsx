@@ -87,7 +87,7 @@ export function EventRow({ event, onUpdate, onDelete }: EventRowProps) {
             step="1"
             value={editValue}
             onChange={(e) => setEditValue(e.target.value)}
-            onBlur={confirmEdit}
+            onBlur={cancelEdit}
             onKeyDown={handleKeyDown}
             disabled={saving}
             style={{
