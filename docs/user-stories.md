@@ -1,4 +1,4 @@
-# ユーザストーリー & 作業計画 (Phase 4)
+# ユーザストーリー & 作業計画 (Phase 4 & 5)
 
 ## ユーザストーリー
 
@@ -40,6 +40,18 @@
 - [ ] ワークスペースが複数ある場合、トレイのサブメニューで選択して出勤できる
 - [ ] アプリウィンドウから打刻ボタンを削除し、統計情報の閲覧に特化する
 - [ ] トレイで打刻後、アプリウィンドウ側のデータも自動反映される
+
+### US-4: 入力した勤怠を後から修正したい
+
+> ユーザとして、入力した勤怠を後から修正したい。
+> なぜなら、どうしても入力ミスなどが発生するからだ。
+
+**受け入れ条件:**
+
+- [ ] 本日の記録セクションからイベントの時刻を修正できる（時刻をクリックしてインライン編集）
+- [ ] 誤って打刻したイベントを削除できる（確認ダイアログ付き）
+- [ ] 修正・削除後に勤務状態・トレイメニューが即座に反映される
+- [ ] イベント順序の整合性が保たれる（出勤→休憩開始→休憩終了→退勤の順序が壊れる修正はエラー）
 
 ---
 
@@ -265,3 +277,45 @@ Phase 4c (トレイ打刻)  ← ワークスペース対応済みのトレイメ
   - 操作後にトレイメニューの状態表示が即座に更新されることを確認
   - ワークスペース2つの場合、サブメニューから選んで出勤できることを確認
   - トレイから打刻後、アプリウィンドウを開いた時にデータが反映されていることを確認
+
+---
+
+## Phase 5: 勤怠データ修正 (US-4)
+
+### 設計方針
+
+イベントソーシングだが個人用アプリのため、イベントの直接 UPDATE / DELETE で実装する。
+補正イベント方式は過剰なため採用しない。
+
+修正時にはイベント順序の整合性を検証し、矛盾する変更を防ぐ。
+
+### タスク
+
+1. `attendance.rs` に `validate_event_order` 関数を追加（同セッション内の全イベントの順序整合性を検証）
+2. `attendance.rs` に `update_event` コマンドを追加（時刻修正 + 順序検証 + トレイ更新通知）
+3. `attendance.rs` に `delete_event` コマンドを追加（削除 + 順序検証 + トレイ更新通知）
+4. `lib.rs` の `invoke_handler` に2コマンドを登録
+5. `commands.ts` に `updateEvent` / `deleteEvent` ラッパー追加
+6. `useAttendance.ts` に `doUpdateEvent` / `doDeleteEvent` 追加
+7. `formatters.ts` に時刻変換ヘルパー追加
+8. `EventRow.tsx` を新規作成（インライン編集・削除UI）
+9. `HomePage.tsx` でイベント一覧を `EventRow` に置き換え
+
+### 影響ファイル
+
+| ファイル | 変更内容 |
+|---|---|
+| `src-tauri/src/commands/attendance.rs` | update_event, delete_event, validate_event_order 追加 |
+| `src-tauri/src/lib.rs` | invoke_handler に2コマンド登録 |
+| `frontend/src/components/EventRow.tsx` | 新規: インライン編集・削除UIコンポーネント |
+| `frontend/src/pages/HomePage.tsx` | EventRow に置き換え |
+| `frontend/src/hooks/useAttendance.ts` | doUpdateEvent, doDeleteEvent 追加 |
+| `frontend/src/lib/commands.ts` | updateEvent, deleteEvent ラッパー追加 |
+| `frontend/src/lib/formatters.ts` | 時刻変換ヘルパー追加 |
+
+### 検証方法
+
+- 出勤→休憩→休憩終了→退勤を打刻し、各時刻を修正できることを確認
+- 順序が壊れる修正（退勤を出勤より前にする等）がエラーになることを確認
+- イベント削除後に状態・トレイメニューが正しく更新されることを確認
+- clock_in の削除がセッション内に他イベントがある場合に拒否されることを確認

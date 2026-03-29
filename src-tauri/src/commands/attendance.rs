@@ -1,10 +1,10 @@
 use crate::db::models::{EventType, StampEvent, WorkStatus};
 use crate::slack;
 use crate::state::AppState;
-use chrono::Local;
+use chrono::{DateTime, FixedOffset, Local};
 use rusqlite::OptionalExtension;
 use serde::Serialize;
-use tauri::State;
+use tauri::{Emitter, State};
 
 #[derive(Debug, Serialize)]
 pub struct CurrentStatus {
@@ -64,8 +64,8 @@ pub fn stamp_from_db(
     event_type_str: &str,
     workspace_id: Option<i64>,
 ) -> Result<StampResult, String> {
-    let event_type_enum =
-        EventType::from_str(event_type_str).ok_or_else(|| format!("不正なイベント種別: {}", event_type_str))?;
+    let event_type_enum = EventType::from_str(event_type_str)
+        .ok_or_else(|| format!("不正なイベント種別: {}", event_type_str))?;
 
     let now = Local::now();
     let timestamp = now.to_rfc3339();
@@ -89,8 +89,7 @@ pub fn stamp_from_db(
         }
         (ws_id, now.format("%Y-%m-%d").to_string())
     } else {
-        let (active_key, active_ws_id) =
-            active.ok_or_else(|| "出勤していません".to_string())?;
+        let (active_key, active_ws_id) = active.ok_or_else(|| "出勤していません".to_string())?;
         (active_ws_id, active_key)
     };
 
@@ -173,8 +172,8 @@ pub fn stamp(
     workspace_id: Option<i64>,
     state: State<AppState>,
 ) -> Result<StampResult, String> {
-    let event_type_enum =
-        EventType::from_str(&event_type).ok_or_else(|| format!("不正なイベント種別: {}", event_type))?;
+    let event_type_enum = EventType::from_str(&event_type)
+        .ok_or_else(|| format!("不正なイベント種別: {}", event_type))?;
 
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let now = Local::now();
@@ -201,8 +200,7 @@ pub fn stamp(
         }
         (ws_id, now.format("%Y-%m-%d").to_string())
     } else {
-        let (active_key, active_ws_id) =
-            active.ok_or_else(|| "出勤していません".to_string())?;
+        let (active_key, active_ws_id) = active.ok_or_else(|| "出勤していません".to_string())?;
         (active_ws_id, active_key)
     };
 
@@ -453,9 +451,10 @@ fn calc_work_duration(events: &[StampEvent]) -> Option<String> {
                 break_start = chrono::DateTime::parse_from_rfc3339(&event.timestamp).ok();
             }
             "break_end" => {
-                if let (Some(bs), Ok(be)) =
-                    (break_start.take(), chrono::DateTime::parse_from_rfc3339(&event.timestamp))
-                {
+                if let (Some(bs), Ok(be)) = (
+                    break_start.take(),
+                    chrono::DateTime::parse_from_rfc3339(&event.timestamp),
+                ) {
                     break_secs += (be - bs).num_seconds();
                 }
             }
@@ -468,4 +467,140 @@ fn calc_work_duration(events: &[StampEvent]) -> Option<String> {
     let minutes = (total_secs % 3600) / 60;
 
     Some(format!("{}時間{}分", hours, minutes))
+}
+
+/// イベント列の順序整合性を検証する
+/// イベントは timestamp 昇順でソート済みであること
+fn validate_event_order(events: &[StampEvent]) -> Result<(), String> {
+    if events.is_empty() {
+        return Ok(());
+    }
+
+    // timestamp が昇順であること
+    for i in 1..events.len() {
+        let prev = DateTime::parse_from_rfc3339(&events[i - 1].timestamp)
+            .map_err(|e| format!("タイムスタンプのパースエラー: {}", e))?;
+        let curr = DateTime::parse_from_rfc3339(&events[i].timestamp)
+            .map_err(|e| format!("タイムスタンプのパースエラー: {}", e))?;
+        if curr <= prev {
+            return Err("イベントの時刻順序が不正です".to_string());
+        }
+    }
+
+    // 状態遷移が正しいこと
+    let mut status = WorkStatus::Idle;
+    for event in events {
+        let event_type = EventType::from_str(&event.event_type)
+            .ok_or_else(|| format!("不正なイベント種別: {}", event.event_type))?;
+        validate_transition(&status, &event_type)?;
+        status = match event_type {
+            EventType::ClockIn | EventType::BreakEnd => WorkStatus::Working,
+            EventType::BreakStart => WorkStatus::OnBreak,
+            EventType::ClockOut => WorkStatus::Idle,
+        };
+    }
+
+    Ok(())
+}
+
+/// イベントの時刻を修正する
+#[tauri::command]
+pub fn update_event(
+    id: i64,
+    new_timestamp: String,
+    app: tauri::AppHandle,
+    state: State<AppState>,
+) -> Result<(), String> {
+    // RFC3339 形式の検証
+    let _parsed: DateTime<FixedOffset> = DateTime::parse_from_rfc3339(&new_timestamp)
+        .map_err(|e| format!("不正なタイムスタンプ: {}", e))?;
+
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+
+    // 対象イベントを取得
+    let target: StampEvent = db
+        .query_row(
+            "SELECT id, event_type, timestamp, date_key, workspace_id FROM stamp_events WHERE id = ?1",
+            rusqlite::params![id],
+            map_stamp_event,
+        )
+        .map_err(|_| "イベントが見つかりません".to_string())?;
+
+    // 同じ date_key + workspace_id の全イベントを取得し、対象の timestamp を差し替えて検証
+    let mut events = query_events_by_date(&db, &target.date_key, Some(target.workspace_id))
+        .map_err(|e| e.to_string())?;
+
+    for event in &mut events {
+        if event.id == id {
+            event.timestamp = new_timestamp.clone();
+        }
+    }
+
+    // timestamp 昇順でソート
+    events.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+
+    validate_event_order(&events)?;
+
+    // UPDATE 実行
+    db.execute(
+        "UPDATE stamp_events SET timestamp = ?1 WHERE id = ?2",
+        rusqlite::params![new_timestamp, id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    drop(db);
+
+    let _ = app.emit("attendance-changed", ());
+    crate::refresh_tray_menu(&app);
+
+    Ok(())
+}
+
+/// イベントを削除する
+#[tauri::command]
+pub fn delete_event(id: i64, app: tauri::AppHandle, state: State<AppState>) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+
+    // 対象イベントを取得
+    let target: StampEvent = db
+        .query_row(
+            "SELECT id, event_type, timestamp, date_key, workspace_id FROM stamp_events WHERE id = ?1",
+            rusqlite::params![id],
+            map_stamp_event,
+        )
+        .map_err(|_| "イベントが見つかりません".to_string())?;
+
+    // 同じ date_key + workspace_id の全イベントを取得し、対象を除外して検証
+    let events = query_events_by_date(&db, &target.date_key, Some(target.workspace_id))
+        .map_err(|e| e.to_string())?;
+
+    let remaining: Vec<StampEvent> = events.into_iter().filter(|e| e.id != id).collect();
+
+    // clock_in を削除する場合、残りにイベントがあったら拒否
+    if target.event_type == "clock_in" && !remaining.is_empty() {
+        // 残りのイベントに同じセッション（この clock_in 以降）のものがあるか確認
+        let has_later_events = remaining.iter().any(|e| e.timestamp > target.timestamp);
+        if has_later_events {
+            return Err(
+                "出勤イベントを削除するには、先にそのセッション内の他のイベントを削除してください"
+                    .to_string(),
+            );
+        }
+    }
+
+    validate_event_order(&remaining)?;
+
+    // DELETE 実行
+    db.execute(
+        "DELETE FROM stamp_events WHERE id = ?1",
+        rusqlite::params![id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    drop(db);
+
+    let _ = app.emit("attendance-changed", ());
+    crate::refresh_tray_menu(&app);
+
+    Ok(())
 }

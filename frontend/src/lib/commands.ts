@@ -60,3 +60,12 @@ export async function updateWorkspace(workspace: Workspace): Promise<void> {
 export async function deleteWorkspace(id: number): Promise<void> {
   return invoke("delete_workspace", { id });
 }
+
+// イベント修正・削除
+export async function updateEvent(id: number, newTimestamp: string): Promise<void> {
+  return invoke("update_event", { id, newTimestamp });
+}
+
+export async function deleteEvent(id: number): Promise<void> {
+  return invoke("delete_event", { id });
+}

@@ -43,3 +43,37 @@ export function eventTypeLabel(eventType: EventType): string {
       return "休憩終了";
   }
 }
+
+/** RFC3339 タイムスタンプから HH:MM:SS 形式を抽出する（input[type=time] 用） */
+export function extractTimeForInput(isoString: string): string {
+  const date = new Date(isoString);
+  const h = String(date.getHours()).padStart(2, "0");
+  const m = String(date.getMinutes()).padStart(2, "0");
+  const s = String(date.getSeconds()).padStart(2, "0");
+  return `${h}:${m}:${s}`;
+}
+
+/** 元のタイムスタンプの日付・タイムゾーンを保持しつつ、時刻だけを差し替えた RFC3339 を返す */
+export function replaceTimeInTimestamp(
+  originalTimestamp: string,
+  newTime: string,
+): string {
+  // originalTimestamp: "2026-03-29T09:00:00+09:00"
+  // newTime: "10:30:00"
+  const match = originalTimestamp.match(
+    /^(\d{4}-\d{2}-\d{2})T\d{2}:\d{2}:\d{2}([+-]\d{2}:\d{2}|Z)$/,
+  );
+  if (match) {
+    return `${match[1]}T${newTime}${match[2]}`;
+  }
+  // フォールバック: ローカルタイムゾーンで組み立て
+  const date = new Date(originalTimestamp);
+  const [h, m, s] = newTime.split(":").map(Number);
+  date.setHours(h, m, s, 0);
+  const tzOffset = -date.getTimezoneOffset();
+  const sign = tzOffset >= 0 ? "+" : "-";
+  const tzH = String(Math.floor(Math.abs(tzOffset) / 60)).padStart(2, "0");
+  const tzM = String(Math.abs(tzOffset) % 60).padStart(2, "0");
+  const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  return `${dateStr}T${newTime}${sign}${tzH}:${tzM}`;
+}

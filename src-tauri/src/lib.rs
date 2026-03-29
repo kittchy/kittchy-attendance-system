@@ -14,16 +14,17 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{Emitter, Manager};
 
 /// トレイメニューを現在の勤務状態に基づいて動的に構築する
-fn build_tray_menu(app: &tauri::AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>, Box<dyn std::error::Error>> {
+fn build_tray_menu(
+    app: &tauri::AppHandle,
+) -> Result<tauri::menu::Menu<tauri::Wry>, Box<dyn std::error::Error>> {
     let state = app.state::<AppState>();
     let db = state.db.lock().map_err(|e| e.to_string())?;
 
     let current = get_current_status_from_db(&db)?;
 
     // ワークスペース一覧を取得
-    let mut ws_stmt = db.prepare(
-        "SELECT id, name FROM workspaces ORDER BY sort_order ASC, id ASC",
-    )?;
+    let mut ws_stmt =
+        db.prepare("SELECT id, name FROM workspaces ORDER BY sort_order ASC, id ASC")?;
     let workspaces: Vec<(i64, String)> = ws_stmt
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<Result<Vec<_>, _>>()?;
@@ -58,12 +59,18 @@ fn build_tray_menu(app: &tauri::AppHandle) -> Result<tauri::menu::Menu<tauri::Wr
     // 状態に応じたアクションボタン
     match current.status {
         WorkStatus::Working => {
-            let clock_out = MenuItemBuilder::new("退勤").id("action_clock_out").build(app)?;
-            let break_start = MenuItemBuilder::new("休憩").id("action_break_start").build(app)?;
+            let clock_out = MenuItemBuilder::new("退勤")
+                .id("action_clock_out")
+                .build(app)?;
+            let break_start = MenuItemBuilder::new("休憩")
+                .id("action_break_start")
+                .build(app)?;
             builder = builder.item(&clock_out).item(&break_start).separator();
         }
         WorkStatus::OnBreak => {
-            let break_end = MenuItemBuilder::new("休憩終了").id("action_break_end").build(app)?;
+            let break_end = MenuItemBuilder::new("休憩終了")
+                .id("action_break_end")
+                .build(app)?;
             builder = builder.item(&break_end).separator();
         }
         WorkStatus::Idle => {
@@ -87,7 +94,9 @@ fn build_tray_menu(app: &tauri::AppHandle) -> Result<tauri::menu::Menu<tauri::Wr
     }
 
     // 共通メニュー
-    let show_item = MenuItemBuilder::new("ウィンドウを表示").id("show").build(app)?;
+    let show_item = MenuItemBuilder::new("ウィンドウを表示")
+        .id("show")
+        .build(app)?;
     let quit_item = MenuItemBuilder::new("終了").id("quit").build(app)?;
     builder = builder.item(&show_item).item(&quit_item);
 
@@ -95,7 +104,7 @@ fn build_tray_menu(app: &tauri::AppHandle) -> Result<tauri::menu::Menu<tauri::Wr
 }
 
 /// トレイメニューを再構築して更新する
-fn refresh_tray_menu(app: &tauri::AppHandle) {
+pub fn refresh_tray_menu(app: &tauri::AppHandle) {
     match build_tray_menu(app) {
         Ok(menu) => {
             if let Some(tray) = app.tray_by_id("main") {
@@ -184,8 +193,7 @@ pub fn run() {
             }
 
             // システムトレイ（動的メニュー）
-            let menu = build_tray_menu(app.handle())
-                .expect("failed to build tray menu");
+            let menu = build_tray_menu(app.handle()).expect("failed to build tray menu");
 
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().cloned().unwrap())
@@ -223,6 +231,8 @@ pub fn run() {
             commands::attendance::get_current_status,
             commands::attendance::stamp,
             commands::attendance::get_today_events,
+            commands::attendance::update_event,
+            commands::attendance::delete_event,
             commands::settings::get_settings,
             commands::settings::update_setting,
             commands::summary::get_daily_records,

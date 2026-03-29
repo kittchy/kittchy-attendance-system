@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentStatus, getTodayEvents, stamp } from "../lib/commands";
+import {
+  getCurrentStatus,
+  getTodayEvents,
+  stamp,
+  updateEvent,
+  deleteEvent,
+} from "../lib/commands";
 import type { CurrentStatus, EventType, StampEvent } from "../types";
 
 export function useAttendance() {
@@ -55,5 +61,23 @@ export function useAttendance() {
     [refresh],
   );
 
-  return { status, events, loading, error, doStamp, refresh };
+  const doUpdateEvent = useCallback(
+    async (id: number, newTimestamp: string) => {
+      setError(null);
+      await updateEvent(id, newTimestamp);
+      await refresh();
+    },
+    [refresh],
+  );
+
+  const doDeleteEvent = useCallback(
+    async (id: number) => {
+      setError(null);
+      await deleteEvent(id);
+      await refresh();
+    },
+    [refresh],
+  );
+
+  return { status, events, loading, error, doStamp, doUpdateEvent, doDeleteEvent, refresh };
 }

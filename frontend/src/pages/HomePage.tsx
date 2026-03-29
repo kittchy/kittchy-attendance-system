@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { ActionButton } from "../components/ActionButton";
+import { EventRow } from "../components/EventRow";
 import { StatusBadge } from "../components/StatusBadge";
 import { useAttendance } from "../hooks/useAttendance";
 import { useWorkspaces } from "../hooks/useWorkspaces";
-import { eventTypeLabel, formatTime } from "../lib/formatters";
 import type { EventType } from "../types";
 
 interface Props {
@@ -12,7 +12,7 @@ interface Props {
 }
 
 export function HomePage({ onNavigateHistory, onNavigateSettings }: Props) {
-  const { status, events, loading, error, doStamp } = useAttendance();
+  const { status, events, loading, error, doStamp, doUpdateEvent, doDeleteEvent } = useAttendance();
   const { workspaces, loading: wsLoading } = useWorkspaces();
   const [selectedWsId, setSelectedWsId] = useState<number | null>(null);
 
@@ -136,22 +136,12 @@ export function HomePage({ onNavigateHistory, onNavigateSettings }: Props) {
             }}
           >
             {events.map((event) => (
-              <div
+              <EventRow
                 key={event.id}
-                style={{
-                  display: "flex",
-                  gap: "12px",
-                  padding: "8px 12px",
-                  backgroundColor: "#f9fafb",
-                  borderRadius: "8px",
-                  fontSize: "14px",
-                }}
-              >
-                <span style={{ color: "#9ca3af", fontFamily: "monospace" }}>
-                  {formatTime(event.timestamp)}
-                </span>
-                <span>{eventTypeLabel(event.event_type)}</span>
-              </div>
+                event={event}
+                onUpdate={doUpdateEvent}
+                onDelete={doDeleteEvent}
+              />
             ))}
           </div>
         </div>
