@@ -114,7 +114,7 @@ pub fn stamp_from_db(
 
     if !slack_url.is_empty() {
         let message = build_slack_message(&event_type_enum, db, &date_key, ws_id);
-        tokio::spawn(async move {
+        tauri::async_runtime::spawn(async move {
             slack::send_slack_message(&slack_url, &message).await;
         });
     }
@@ -226,7 +226,7 @@ pub fn stamp(
 
     if !slack_url.is_empty() {
         let message = build_slack_message(&event_type_enum, &db, &date_key, ws_id);
-        tokio::spawn(async move {
+        tauri::async_runtime::spawn(async move {
             slack::send_slack_message(&slack_url, &message).await;
         });
     }
