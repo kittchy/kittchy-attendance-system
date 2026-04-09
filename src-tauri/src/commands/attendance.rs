@@ -394,25 +394,14 @@ fn build_slack_message(
     date_key: &str,
     workspace_id: i64,
 ) -> String {
-    // ワークスペース名を取得
-    let ws_name: String = db
-        .query_row(
-            "SELECT name FROM workspaces WHERE id = ?1",
-            rusqlite::params![workspace_id],
-            |row| row.get(0),
-        )
-        .unwrap_or_else(|_| "不明".to_string());
-
     match event_type {
         EventType::ClockIn => {
-            let msg: String = db
-                .query_row(
-                    "SELECT slack_clock_in_message FROM workspaces WHERE id = ?1",
-                    rusqlite::params![workspace_id],
-                    |row| row.get(0),
-                )
-                .unwrap_or_else(|_| "出勤しました".to_string());
-            format!("[{}] {}", ws_name, msg)
+            db.query_row(
+                "SELECT slack_clock_in_message FROM workspaces WHERE id = ?1",
+                rusqlite::params![workspace_id],
+                |row| row.get(0),
+            )
+            .unwrap_or_else(|_| "出勤しました".to_string())
         }
         EventType::ClockOut => {
             let msg: String = db
@@ -425,30 +414,26 @@ fn build_slack_message(
 
             if let Ok(events) = query_events_by_date(db, date_key, Some(workspace_id)) {
                 if let Some(work_info) = calc_work_duration(&events) {
-                    return format!("[{}] {} (本日の勤務時間: {})", ws_name, msg, work_info);
+                    return format!("{} (本日の勤務時間: {})", msg, work_info);
                 }
             }
-            format!("[{}] {}", ws_name, msg)
+            msg
         }
         EventType::BreakStart => {
-            let msg: String = db
-                .query_row(
-                    "SELECT slack_break_start_message FROM workspaces WHERE id = ?1",
-                    rusqlite::params![workspace_id],
-                    |row| row.get(0),
-                )
-                .unwrap_or_else(|_| "離席します".to_string());
-            format!("[{}] {}", ws_name, msg)
+            db.query_row(
+                "SELECT slack_break_start_message FROM workspaces WHERE id = ?1",
+                rusqlite::params![workspace_id],
+                |row| row.get(0),
+            )
+            .unwrap_or_else(|_| "離席します".to_string())
         }
         EventType::BreakEnd => {
-            let msg: String = db
-                .query_row(
-                    "SELECT slack_break_end_message FROM workspaces WHERE id = ?1",
-                    rusqlite::params![workspace_id],
-                    |row| row.get(0),
-                )
-                .unwrap_or_else(|_| "戻りました".to_string());
-            format!("[{}] {}", ws_name, msg)
+            db.query_row(
+                "SELECT slack_break_end_message FROM workspaces WHERE id = ?1",
+                rusqlite::params![workspace_id],
+                |row| row.get(0),
+            )
+            .unwrap_or_else(|_| "戻りました".to_string())
         }
     }
 }
