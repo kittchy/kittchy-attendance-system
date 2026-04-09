@@ -55,5 +55,7 @@ pub struct Workspace {
     pub slack_webhook_url: String,
     pub slack_clock_in_message: String,
     pub slack_clock_out_message: String,
+    pub slack_break_start_message: String,
+    pub slack_break_end_message: String,
     pub sort_order: i64,
 }

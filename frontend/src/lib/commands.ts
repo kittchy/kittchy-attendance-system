@@ -54,6 +54,8 @@ export async function updateWorkspace(workspace: Workspace): Promise<void> {
     slackWebhookUrl: workspace.slack_webhook_url,
     slackClockInMessage: workspace.slack_clock_in_message,
     slackClockOutMessage: workspace.slack_clock_out_message,
+    slackBreakStartMessage: workspace.slack_break_start_message,
+    slackBreakEndMessage: workspace.slack_break_end_message,
   });
 }
 

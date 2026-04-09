@@ -321,6 +321,24 @@ function WorkspaceCard({
           />
         </div>
 
+        <div>
+          <label style={labelStyle}>休憩開始メッセージ</label>
+          <input
+            style={inputStyle}
+            value={ws.slack_break_start_message}
+            onChange={(e) => onUpdateField("slack_break_start_message", e.target.value)}
+          />
+        </div>
+
+        <div>
+          <label style={labelStyle}>休憩終了メッセージ</label>
+          <input
+            style={inputStyle}
+            value={ws.slack_break_end_message}
+            onChange={(e) => onUpdateField("slack_break_end_message", e.target.value)}
+          />
+        </div>
+
         <div style={{ display: "flex", gap: "8px", justifyContent: "space-between" }}>
           <div>
             {workspace.id !== 1 && (

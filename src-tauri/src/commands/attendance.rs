@@ -430,8 +430,26 @@ fn build_slack_message(
             }
             format!("[{}] {}", ws_name, msg)
         }
-        EventType::BreakStart => format!("[{}] 休憩に入ります", ws_name),
-        EventType::BreakEnd => format!("[{}] 休憩から戻りました", ws_name),
+        EventType::BreakStart => {
+            let msg: String = db
+                .query_row(
+                    "SELECT slack_break_start_message FROM workspaces WHERE id = ?1",
+                    rusqlite::params![workspace_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or_else(|_| "離席します".to_string());
+            format!("[{}] {}", ws_name, msg)
+        }
+        EventType::BreakEnd => {
+            let msg: String = db
+                .query_row(
+                    "SELECT slack_break_end_message FROM workspaces WHERE id = ?1",
+                    rusqlite::params![workspace_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or_else(|_| "戻りました".to_string());
+            format!("[{}] {}", ws_name, msg)
+        }
     }
 }
 

@@ -7,7 +7,8 @@ pub fn list_workspaces(state: State<AppState>) -> Result<Vec<Workspace>, String>
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let mut stmt = db
         .prepare(
-            "SELECT id, name, color, slack_webhook_url, slack_clock_in_message, slack_clock_out_message, sort_order \
+            "SELECT id, name, color, slack_webhook_url, slack_clock_in_message, slack_clock_out_message, \
+             slack_break_start_message, slack_break_end_message, sort_order \
              FROM workspaces ORDER BY sort_order ASC, id ASC",
         )
         .map_err(|e| e.to_string())?;
@@ -21,7 +22,9 @@ pub fn list_workspaces(state: State<AppState>) -> Result<Vec<Workspace>, String>
                 slack_webhook_url: row.get(3)?,
                 slack_clock_in_message: row.get(4)?,
                 slack_clock_out_message: row.get(5)?,
-                sort_order: row.get(6)?,
+                slack_break_start_message: row.get(6)?,
+                slack_break_end_message: row.get(7)?,
+                sort_order: row.get(8)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -63,6 +66,8 @@ pub fn create_workspace(
         slack_webhook_url: String::new(),
         slack_clock_in_message: "出勤しました".to_string(),
         slack_clock_out_message: "退勤しました".to_string(),
+        slack_break_start_message: "離席します".to_string(),
+        slack_break_end_message: "戻りました".to_string(),
         sort_order: max_order + 1,
     })
 }
@@ -75,6 +80,8 @@ pub fn update_workspace(
     slack_webhook_url: String,
     slack_clock_in_message: String,
     slack_clock_out_message: String,
+    slack_break_start_message: String,
+    slack_break_end_message: String,
     state: State<AppState>,
 ) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
@@ -82,13 +89,16 @@ pub fn update_workspace(
     let affected = db
         .execute(
             "UPDATE workspaces SET name = ?1, color = ?2, slack_webhook_url = ?3, \
-             slack_clock_in_message = ?4, slack_clock_out_message = ?5 WHERE id = ?6",
+             slack_clock_in_message = ?4, slack_clock_out_message = ?5, \
+             slack_break_start_message = ?6, slack_break_end_message = ?7 WHERE id = ?8",
             rusqlite::params![
                 name,
                 color,
                 slack_webhook_url,
                 slack_clock_in_message,
                 slack_clock_out_message,
+                slack_break_start_message,
+                slack_break_end_message,
                 id
             ],
         )

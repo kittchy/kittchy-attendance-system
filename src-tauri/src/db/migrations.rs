@@ -24,6 +24,8 @@ pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
             slack_webhook_url TEXT NOT NULL DEFAULT '',
             slack_clock_in_message TEXT NOT NULL DEFAULT '出勤しました',
             slack_clock_out_message TEXT NOT NULL DEFAULT '退勤しました',
+            slack_break_start_message TEXT NOT NULL DEFAULT '離席します',
+            slack_break_end_message TEXT NOT NULL DEFAULT '戻りました',
             sort_order INTEGER NOT NULL DEFAULT 0
         );
         ",
@@ -45,6 +47,20 @@ pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
     if !has_workspace_id {
         conn.execute_batch(
             "ALTER TABLE stamp_events ADD COLUMN workspace_id INTEGER NOT NULL DEFAULT 1;",
+        )?;
+    }
+
+    // workspaces に slack_break_start_message / slack_break_end_message カラムを追加（既存テーブルの場合）
+    let has_break_start_msg: bool = conn
+        .prepare(
+            "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'slack_break_start_message'",
+        )?
+        .query_row([], |row| row.get(0))?;
+
+    if !has_break_start_msg {
+        conn.execute_batch(
+            "ALTER TABLE workspaces ADD COLUMN slack_break_start_message TEXT NOT NULL DEFAULT '離席します';
+             ALTER TABLE workspaces ADD COLUMN slack_break_end_message TEXT NOT NULL DEFAULT '戻りました';",
         )?;
     }
 

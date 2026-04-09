@@ -42,5 +42,7 @@ export interface Workspace {
   slack_webhook_url: string;
   slack_clock_in_message: string;
   slack_clock_out_message: string;
+  slack_break_start_message: string;
+  slack_break_end_message: string;
   sort_order: number;
 }
