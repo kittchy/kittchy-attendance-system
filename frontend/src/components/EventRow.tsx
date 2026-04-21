@@ -13,6 +13,7 @@ export function EventRow({ event, onUpdate, onDelete }: EventRowProps) {
   const [editValue, setEditValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const startEdit = () => {
@@ -47,13 +48,23 @@ export function EventRow({ event, onUpdate, onDelete }: EventRowProps) {
     }
   };
 
-  const handleDelete = async () => {
-    if (!window.confirm("このイベントを削除しますか?")) return;
+  const requestDelete = () => {
+    setError(null);
+    setConfirmingDelete(true);
+  };
+
+  const cancelDelete = () => {
+    setConfirmingDelete(false);
+  };
+
+  const confirmDelete = async () => {
     try {
       setError(null);
       await onDelete(event.id);
+      setConfirmingDelete(false);
     } catch (err) {
       setError(String(err));
+      setConfirmingDelete(false);
     }
   };
 
@@ -118,25 +129,61 @@ export function EventRow({ event, onUpdate, onDelete }: EventRowProps) {
           </span>
         )}
         <span style={{ flex: 1 }}>{eventTypeLabel(event.event_type)}</span>
-        <button
-          onClick={handleDelete}
-          title="削除"
-          className="delete-btn"
-          style={{
-            background: "none",
-            border: "none",
-            color: "#d1d5db",
-            cursor: "pointer",
-            fontSize: "16px",
-            padding: "0 4px",
-            lineHeight: 1,
-            transition: "color 0.15s",
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.color = "#ef4444")}
-          onMouseLeave={(e) => (e.currentTarget.style.color = "#d1d5db")}
-        >
-          ×
-        </button>
+        {confirmingDelete ? (
+          <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+            <span style={{ fontSize: "12px", color: "#6b7280" }}>削除？</span>
+            <button
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={confirmDelete}
+              style={{
+                background: "#ef4444",
+                color: "white",
+                border: "none",
+                borderRadius: "4px",
+                padding: "2px 8px",
+                fontSize: "12px",
+                cursor: "pointer",
+              }}
+            >
+              削除
+            </button>
+            <button
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={cancelDelete}
+              style={{
+                background: "transparent",
+                color: "#6b7280",
+                border: "1px solid #d1d5db",
+                borderRadius: "4px",
+                padding: "2px 8px",
+                fontSize: "12px",
+                cursor: "pointer",
+              }}
+            >
+              取消
+            </button>
+          </div>
+        ) : (
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={requestDelete}
+            title="削除"
+            style={{
+              background: "none",
+              border: "none",
+              color: "#9ca3af",
+              cursor: "pointer",
+              fontSize: "18px",
+              padding: "0 6px",
+              lineHeight: 1,
+              transition: "color 0.15s",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = "#ef4444")}
+            onMouseLeave={(e) => (e.currentTarget.style.color = "#9ca3af")}
+          >
+            ×
+          </button>
+        )}
       </div>
       {error && (
         <div

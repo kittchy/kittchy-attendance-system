@@ -72,6 +72,12 @@ export async function deleteEvent(id: number): Promise<void> {
   return invoke("delete_event", { id });
 }
 
-export async function addMissingClockOut(newTimestamp: string): Promise<void> {
-  return invoke("add_missing_clock_out", { newTimestamp });
+export async function addMissingClockOut(
+  newTimestamp: string,
+  breakEndTimestamp?: string,
+): Promise<void> {
+  return invoke("add_missing_clock_out", {
+    newTimestamp,
+    breakEndTimestamp: breakEndTimestamp ?? null,
+  });
 }

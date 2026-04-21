@@ -79,8 +79,8 @@ export function useAttendance() {
   );
 
   const doAddMissingClockOut = useCallback(
-    async (newTimestamp: string) => {
-      await addMissingClockOut(newTimestamp);
+    async (newTimestamp: string, breakEndTimestamp?: string) => {
+      await addMissingClockOut(newTimestamp, breakEndTimestamp);
       await refresh();
     },
     [refresh],

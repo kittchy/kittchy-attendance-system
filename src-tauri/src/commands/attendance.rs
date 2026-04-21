@@ -561,13 +561,15 @@ pub fn update_event(
 }
 
 /// 退勤漏れを遡及的に修正する（Slack通知は送信しない）
+/// 休憩中の場合は break_end_timestamp を指定して休憩終了も同時に記録する
 #[tauri::command]
 pub fn add_missing_clock_out(
     new_timestamp: String,
+    break_end_timestamp: Option<String>,
     app: tauri::AppHandle,
     state: State<AppState>,
 ) -> Result<(), String> {
-    let parsed: DateTime<FixedOffset> = DateTime::parse_from_rfc3339(&new_timestamp)
+    let parsed_clock_out: DateTime<FixedOffset> = DateTime::parse_from_rfc3339(&new_timestamp)
         .map_err(|e| format!("不正なタイムスタンプ: {}", e))?;
 
     let db = state.db.lock().map_err(|e| e.to_string())?;
@@ -578,28 +580,52 @@ pub fn add_missing_clock_out(
     let events = query_latest_session_events(&db, &date_key, ws_id).map_err(|e| e.to_string())?;
     let (current_status, _) = derive_status(&events);
 
-    if current_status != WorkStatus::Working {
-        return Err(
-            "退勤漏れ修正は勤務中の状態でのみ実行できます（休憩中の場合は履歴画面で個別に修正してください）"
-                .to_string(),
-        );
-    }
-
     let last = events
         .last()
         .ok_or_else(|| "セッションイベントが見つかりません".to_string())?;
     let last_time = DateTime::parse_from_rfc3339(&last.timestamp)
         .map_err(|e| format!("イベント時刻のパースエラー: {}", e))?;
 
-    if parsed <= last_time {
-        return Err("退勤時刻は直前のイベントより後にしてください".to_string());
-    }
+    match current_status {
+        WorkStatus::Working => {
+            if parsed_clock_out <= last_time {
+                return Err("退勤時刻は直前のイベントより後にしてください".to_string());
+            }
 
-    db.execute(
-        "INSERT INTO stamp_events (event_type, timestamp, date_key, workspace_id) VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params!["clock_out", new_timestamp, date_key, ws_id],
-    )
-    .map_err(|e| e.to_string())?;
+            db.execute(
+                "INSERT INTO stamp_events (event_type, timestamp, date_key, workspace_id) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params!["clock_out", new_timestamp, date_key, ws_id],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        WorkStatus::OnBreak => {
+            let be_ts = break_end_timestamp
+                .ok_or_else(|| "休憩中のため休憩終了時刻も指定してください".to_string())?;
+            let parsed_break_end: DateTime<FixedOffset> = DateTime::parse_from_rfc3339(&be_ts)
+                .map_err(|e| format!("不正な休憩終了タイムスタンプ: {}", e))?;
+
+            if parsed_break_end <= last_time {
+                return Err("休憩終了時刻は休憩開始より後にしてください".to_string());
+            }
+            if parsed_clock_out <= parsed_break_end {
+                return Err("退勤時刻は休憩終了より後にしてください".to_string());
+            }
+
+            db.execute(
+                "INSERT INTO stamp_events (event_type, timestamp, date_key, workspace_id) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params!["break_end", be_ts, date_key, ws_id],
+            )
+            .map_err(|e| e.to_string())?;
+            db.execute(
+                "INSERT INTO stamp_events (event_type, timestamp, date_key, workspace_id) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params!["clock_out", new_timestamp, date_key, ws_id],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        WorkStatus::Idle => {
+            return Err("退勤漏れのセッションがありません".to_string());
+        }
+    }
 
     drop(db);
 

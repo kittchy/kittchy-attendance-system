@@ -27,6 +27,7 @@ export function HomePage({ onNavigateHistory, onNavigateSettings }: Props) {
   const [selectedWsId, setSelectedWsId] = useState<number | null>(null);
   const [showFixForm, setShowFixForm] = useState(false);
   const [fixDateTime, setFixDateTime] = useState("");
+  const [fixBreakEndDateTime, setFixBreakEndDateTime] = useState("");
   const [fixError, setFixError] = useState<string | null>(null);
   const [fixSaving, setFixSaving] = useState(false);
 
@@ -51,6 +52,7 @@ export function HomePage({ onNavigateHistory, onNavigateSettings }: Props) {
     const y = base.getFullYear();
     const m = String(base.getMonth() + 1).padStart(2, "0");
     const d = String(base.getDate()).padStart(2, "0");
+    setFixBreakEndDateTime(`${y}-${m}-${d}T17:30`);
     setFixDateTime(`${y}-${m}-${d}T18:00`);
     setFixError(null);
     setShowFixForm(true);
@@ -58,10 +60,15 @@ export function HomePage({ onNavigateHistory, onNavigateSettings }: Props) {
 
   const submitFix = async () => {
     if (!fixDateTime || fixSaving) return;
+    const needsBreakEnd = status.status === "on_break";
+    if (needsBreakEnd && !fixBreakEndDateTime) return;
     setFixSaving(true);
     setFixError(null);
     try {
-      await doAddMissingClockOut(buildLocalTimestamp(fixDateTime));
+      await doAddMissingClockOut(
+        buildLocalTimestamp(fixDateTime),
+        needsBreakEnd ? buildLocalTimestamp(fixBreakEndDateTime) : undefined,
+      );
       setShowFixForm(false);
     } catch (err) {
       setFixError(String(err));
@@ -131,7 +138,7 @@ export function HomePage({ onNavigateHistory, onNavigateSettings }: Props) {
 
       <ActionButton currentStatus={status.status} onStamp={handleStamp} />
 
-      {status.status === "working" && (
+      {(status.status === "working" || status.status === "on_break") && (
         <div style={{ marginBottom: "16px" }}>
           {!showFixForm ? (
             <button
@@ -157,17 +164,52 @@ export function HomePage({ onNavigateHistory, onNavigateSettings }: Props) {
                 border: "1px solid #e5e7eb",
               }}
             >
-              <label
+              <div
                 style={{
                   fontSize: "13px",
                   color: "#6b7280",
-                  display: "block",
-                  marginBottom: "6px",
+                  marginBottom: "8px",
                 }}
               >
                 退勤時刻を指定（Slack通知は送信されません）
-              </label>
-              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
+              </div>
+              {status.status === "on_break" && (
+                <div style={{ marginBottom: "8px" }}>
+                  <label
+                    style={{
+                      fontSize: "12px",
+                      color: "#6b7280",
+                      display: "block",
+                      marginBottom: "4px",
+                    }}
+                  >
+                    休憩終了時刻
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={fixBreakEndDateTime}
+                    onChange={(e) => setFixBreakEndDateTime(e.target.value)}
+                    disabled={fixSaving}
+                    style={{
+                      fontSize: "14px",
+                      padding: "4px 8px",
+                      border: "1px solid #d1d5db",
+                      borderRadius: "6px",
+                    }}
+                  />
+                </div>
+              )}
+              <div style={{ marginBottom: "10px" }}>
+                <label
+                  style={{
+                    fontSize: "12px",
+                    color: "#6b7280",
+                    display: "block",
+                    marginBottom: "4px",
+                  }}
+                >
+                  退勤時刻
+                </label>
                 <input
                   type="datetime-local"
                   value={fixDateTime}
@@ -180,9 +222,15 @@ export function HomePage({ onNavigateHistory, onNavigateSettings }: Props) {
                     borderRadius: "6px",
                   }}
                 />
+              </div>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
                 <button
                   onClick={submitFix}
-                  disabled={fixSaving || !fixDateTime}
+                  disabled={
+                    fixSaving ||
+                    !fixDateTime ||
+                    (status.status === "on_break" && !fixBreakEndDateTime)
+                  }
                   style={{
                     padding: "6px 14px",
                     fontSize: "13px",
