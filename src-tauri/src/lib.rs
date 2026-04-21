@@ -233,6 +233,7 @@ pub fn run() {
             commands::attendance::get_today_events,
             commands::attendance::update_event,
             commands::attendance::delete_event,
+            commands::attendance::add_missing_clock_out,
             commands::settings::get_settings,
             commands::settings::update_setting,
             commands::summary::get_daily_records,

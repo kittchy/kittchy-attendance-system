@@ -4,6 +4,7 @@ import { EventRow } from "../components/EventRow";
 import { StatusBadge } from "../components/StatusBadge";
 import { useAttendance } from "../hooks/useAttendance";
 import { useWorkspaces } from "../hooks/useWorkspaces";
+import { buildLocalTimestamp } from "../lib/formatters";
 import type { EventType } from "../types";
 
 interface Props {
@@ -12,9 +13,22 @@ interface Props {
 }
 
 export function HomePage({ onNavigateHistory, onNavigateSettings }: Props) {
-  const { status, events, loading, error, doStamp, doUpdateEvent, doDeleteEvent } = useAttendance();
+  const {
+    status,
+    events,
+    loading,
+    error,
+    doStamp,
+    doUpdateEvent,
+    doDeleteEvent,
+    doAddMissingClockOut,
+  } = useAttendance();
   const { workspaces, loading: wsLoading } = useWorkspaces();
   const [selectedWsId, setSelectedWsId] = useState<number | null>(null);
+  const [showFixForm, setShowFixForm] = useState(false);
+  const [fixDateTime, setFixDateTime] = useState("");
+  const [fixError, setFixError] = useState<string | null>(null);
+  const [fixSaving, setFixSaving] = useState(false);
 
   if (loading || wsLoading) {
     return <div style={{ padding: "32px", textAlign: "center" }}>読み込み中...</div>;
@@ -31,6 +45,30 @@ export function HomePage({ onNavigateHistory, onNavigateSettings }: Props) {
   };
 
   const showWorkspaceSelector = status.status === "idle" && workspaces.length > 1;
+
+  const openFixForm = () => {
+    const base = status.clock_in_time ? new Date(status.clock_in_time) : new Date();
+    const y = base.getFullYear();
+    const m = String(base.getMonth() + 1).padStart(2, "0");
+    const d = String(base.getDate()).padStart(2, "0");
+    setFixDateTime(`${y}-${m}-${d}T18:00`);
+    setFixError(null);
+    setShowFixForm(true);
+  };
+
+  const submitFix = async () => {
+    if (!fixDateTime || fixSaving) return;
+    setFixSaving(true);
+    setFixError(null);
+    try {
+      await doAddMissingClockOut(buildLocalTimestamp(fixDateTime));
+      setShowFixForm(false);
+    } catch (err) {
+      setFixError(String(err));
+    } finally {
+      setFixSaving(false);
+    }
+  };
 
   return (
     <div style={{ padding: "32px", maxWidth: "480px", margin: "0 auto" }}>
@@ -92,6 +130,97 @@ export function HomePage({ onNavigateHistory, onNavigateSettings }: Props) {
       )}
 
       <ActionButton currentStatus={status.status} onStamp={handleStamp} />
+
+      {status.status === "working" && (
+        <div style={{ marginBottom: "16px" }}>
+          {!showFixForm ? (
+            <button
+              onClick={openFixForm}
+              style={{
+                background: "none",
+                border: "none",
+                color: "#6b7280",
+                fontSize: "13px",
+                cursor: "pointer",
+                textDecoration: "underline",
+                padding: "4px 0",
+              }}
+            >
+              退勤漏れを修正...
+            </button>
+          ) : (
+            <div
+              style={{
+                padding: "12px",
+                backgroundColor: "#f9fafb",
+                borderRadius: "8px",
+                border: "1px solid #e5e7eb",
+              }}
+            >
+              <label
+                style={{
+                  fontSize: "13px",
+                  color: "#6b7280",
+                  display: "block",
+                  marginBottom: "6px",
+                }}
+              >
+                退勤時刻を指定（Slack通知は送信されません）
+              </label>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
+                <input
+                  type="datetime-local"
+                  value={fixDateTime}
+                  onChange={(e) => setFixDateTime(e.target.value)}
+                  disabled={fixSaving}
+                  style={{
+                    fontSize: "14px",
+                    padding: "4px 8px",
+                    border: "1px solid #d1d5db",
+                    borderRadius: "6px",
+                  }}
+                />
+                <button
+                  onClick={submitFix}
+                  disabled={fixSaving || !fixDateTime}
+                  style={{
+                    padding: "6px 14px",
+                    fontSize: "13px",
+                    backgroundColor: "#3b82f6",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "6px",
+                    cursor: fixSaving ? "not-allowed" : "pointer",
+                    opacity: fixSaving ? 0.6 : 1,
+                  }}
+                >
+                  記録する
+                </button>
+                <button
+                  onClick={() => setShowFixForm(false)}
+                  disabled={fixSaving}
+                  style={{
+                    padding: "6px 14px",
+                    fontSize: "13px",
+                    backgroundColor: "transparent",
+                    color: "#6b7280",
+                    border: "1px solid #d1d5db",
+                    borderRadius: "6px",
+                    cursor: "pointer",
+                  }}
+                >
+                  キャンセル
+                </button>
+              </div>
+              {fixError && (
+                <div style={{ marginTop: "8px", fontSize: "12px", color: "#dc2626" }}>
+                  {fixError}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {error && (
         <div

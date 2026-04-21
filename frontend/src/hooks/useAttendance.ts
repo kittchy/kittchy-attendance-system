@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
+  addMissingClockOut,
   getCurrentStatus,
   getTodayEvents,
   stamp,
@@ -77,5 +78,23 @@ export function useAttendance() {
     [refresh],
   );
 
-  return { status, events, loading, error, doStamp, doUpdateEvent, doDeleteEvent, refresh };
+  const doAddMissingClockOut = useCallback(
+    async (newTimestamp: string) => {
+      await addMissingClockOut(newTimestamp);
+      await refresh();
+    },
+    [refresh],
+  );
+
+  return {
+    status,
+    events,
+    loading,
+    error,
+    doStamp,
+    doUpdateEvent,
+    doDeleteEvent,
+    doAddMissingClockOut,
+    refresh,
+  };
 }

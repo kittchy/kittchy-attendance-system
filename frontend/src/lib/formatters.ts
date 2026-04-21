@@ -53,6 +53,16 @@ export function extractTimeForInput(isoString: string): string {
   return `${h}:${m}:${s}`;
 }
 
+/** datetime-local の値（YYYY-MM-DDTHH:MM）からローカルTZ付きRFC3339を組み立てる */
+export function buildLocalTimestamp(dateTimeLocal: string): string {
+  const date = new Date(dateTimeLocal);
+  const tzOffset = -date.getTimezoneOffset();
+  const sign = tzOffset >= 0 ? "+" : "-";
+  const tzH = String(Math.floor(Math.abs(tzOffset) / 60)).padStart(2, "0");
+  const tzM = String(Math.abs(tzOffset) % 60).padStart(2, "0");
+  return `${dateTimeLocal}:00${sign}${tzH}:${tzM}`;
+}
+
 /** 元のタイムスタンプの日付・タイムゾーンを保持しつつ、時刻だけを差し替えた RFC3339 を返す */
 export function replaceTimeInTimestamp(
   originalTimestamp: string,

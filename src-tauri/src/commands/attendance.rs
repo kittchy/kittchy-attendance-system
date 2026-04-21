@@ -395,14 +395,13 @@ fn build_slack_message(
     workspace_id: i64,
 ) -> String {
     match event_type {
-        EventType::ClockIn => {
-            db.query_row(
+        EventType::ClockIn => db
+            .query_row(
                 "SELECT slack_clock_in_message FROM workspaces WHERE id = ?1",
                 rusqlite::params![workspace_id],
                 |row| row.get(0),
             )
-            .unwrap_or_else(|_| "出勤しました".to_string())
-        }
+            .unwrap_or_else(|_| "出勤しました".to_string()),
         EventType::ClockOut => {
             let msg: String = db
                 .query_row(
@@ -419,22 +418,20 @@ fn build_slack_message(
             }
             msg
         }
-        EventType::BreakStart => {
-            db.query_row(
+        EventType::BreakStart => db
+            .query_row(
                 "SELECT slack_break_start_message FROM workspaces WHERE id = ?1",
                 rusqlite::params![workspace_id],
                 |row| row.get(0),
             )
-            .unwrap_or_else(|_| "離席します".to_string())
-        }
-        EventType::BreakEnd => {
-            db.query_row(
+            .unwrap_or_else(|_| "離席します".to_string()),
+        EventType::BreakEnd => db
+            .query_row(
                 "SELECT slack_break_end_message FROM workspaces WHERE id = ?1",
                 rusqlite::params![workspace_id],
                 |row| row.get(0),
             )
-            .unwrap_or_else(|_| "戻りました".to_string())
-        }
+            .unwrap_or_else(|_| "戻りました".to_string()),
     }
 }
 
@@ -552,6 +549,55 @@ pub fn update_event(
     db.execute(
         "UPDATE stamp_events SET timestamp = ?1 WHERE id = ?2",
         rusqlite::params![new_timestamp, id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    drop(db);
+
+    let _ = app.emit("attendance-changed", ());
+    crate::refresh_tray_menu(&app);
+
+    Ok(())
+}
+
+/// 退勤漏れを遡及的に修正する（Slack通知は送信しない）
+#[tauri::command]
+pub fn add_missing_clock_out(
+    new_timestamp: String,
+    app: tauri::AppHandle,
+    state: State<AppState>,
+) -> Result<(), String> {
+    let parsed: DateTime<FixedOffset> = DateTime::parse_from_rfc3339(&new_timestamp)
+        .map_err(|e| format!("不正なタイムスタンプ: {}", e))?;
+
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+
+    let (date_key, ws_id) =
+        get_active_session(&db)?.ok_or_else(|| "退勤漏れのセッションがありません".to_string())?;
+
+    let events = query_latest_session_events(&db, &date_key, ws_id).map_err(|e| e.to_string())?;
+    let (current_status, _) = derive_status(&events);
+
+    if current_status != WorkStatus::Working {
+        return Err(
+            "退勤漏れ修正は勤務中の状態でのみ実行できます（休憩中の場合は履歴画面で個別に修正してください）"
+                .to_string(),
+        );
+    }
+
+    let last = events
+        .last()
+        .ok_or_else(|| "セッションイベントが見つかりません".to_string())?;
+    let last_time = DateTime::parse_from_rfc3339(&last.timestamp)
+        .map_err(|e| format!("イベント時刻のパースエラー: {}", e))?;
+
+    if parsed <= last_time {
+        return Err("退勤時刻は直前のイベントより後にしてください".to_string());
+    }
+
+    db.execute(
+        "INSERT INTO stamp_events (event_type, timestamp, date_key, workspace_id) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params!["clock_out", new_timestamp, date_key, ws_id],
     )
     .map_err(|e| e.to_string())?;
 
