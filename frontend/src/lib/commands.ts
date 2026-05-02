@@ -81,3 +81,29 @@ export async function addMissingClockOut(
     breakEndTimestamp: breakEndTimestamp ?? null,
   });
 }
+
+export async function getEventsByMonth(
+  year: number,
+  month: number,
+  workspaceId?: number,
+): Promise<StampEvent[]> {
+  return invoke("get_events_by_month", {
+    year,
+    month,
+    workspaceId: workspaceId ?? null,
+  });
+}
+
+export async function addMissingClockOutForDate(
+  dateKey: string,
+  workspaceId: number,
+  newTimestamp: string,
+  breakEndTimestamp?: string,
+): Promise<void> {
+  return invoke("add_missing_clock_out_for_date", {
+    dateKey,
+    workspaceId,
+    newTimestamp,
+    breakEndTimestamp: breakEndTimestamp ?? null,
+  });
+}

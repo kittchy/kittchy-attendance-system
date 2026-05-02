@@ -1,12 +1,44 @@
-import { useCallback, useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { DailyChart } from "../components/DailyChart";
+import { DayAccordion } from "../components/DayAccordion";
 import { MonthlySummary } from "../components/MonthlySummary";
 import { useWorkspaces } from "../hooks/useWorkspaces";
-import { getDailyRecords } from "../lib/commands";
-import type { DailyRecord } from "../types";
+import {
+  addMissingClockOutForDate,
+  deleteEvent,
+  getDailyRecords,
+  getEventsByMonth,
+  updateEvent,
+} from "../lib/commands";
+import type { DailyRecord, StampEvent } from "../types";
 
 interface Props {
   onBack: () => void;
+}
+
+interface DayGroup {
+  dateKey: string;
+  workspaceId: number;
+  events: StampEvent[];
+}
+
+/** events を (date_key, workspace_id) ごとにグループ化し、新しい日付が上に来るように並べる */
+function groupByDayAndWorkspace(events: StampEvent[]): DayGroup[] {
+  const map = new Map<string, DayGroup>();
+  for (const ev of events) {
+    const key = `${ev.date_key}:${ev.workspace_id}`;
+    let group = map.get(key);
+    if (!group) {
+      group = { dateKey: ev.date_key, workspaceId: ev.workspace_id, events: [] };
+      map.set(key, group);
+    }
+    group.events.push(ev);
+  }
+  return Array.from(map.values()).sort((a, b) => {
+    if (a.dateKey !== b.dateKey) return a.dateKey < b.dateKey ? 1 : -1;
+    return a.workspaceId - b.workspaceId;
+  });
 }
 
 export function HistoryPage({ onBack }: Props) {
@@ -14,23 +46,41 @@ export function HistoryPage({ onBack }: Props) {
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [records, setRecords] = useState<DailyRecord[]>([]);
+  const [events, setEvents] = useState<StampEvent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [summaryRefreshKey, setSummaryRefreshKey] = useState(0);
   const { workspaces } = useWorkspaces();
   const [filterWsId, setFilterWsId] = useState<number | undefined>(undefined);
 
-  const fetchRecords = useCallback(async () => {
+  const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await getDailyRecords(year, month, filterWsId);
+      const [r, e] = await Promise.all([
+        getDailyRecords(year, month, filterWsId),
+        getEventsByMonth(year, month, filterWsId),
+      ]);
       setRecords(r);
+      setEvents(e);
     } finally {
       setLoading(false);
     }
   }, [year, month, filterWsId]);
 
   useEffect(() => {
-    fetchRecords();
-  }, [fetchRecords]);
+    fetchAll();
+  }, [fetchAll]);
+
+  // トレイ打刻や HomePage 側の操作にも追従する
+  useEffect(() => {
+    const unlisten = listen("attendance-changed", async () => {
+      await fetchAll();
+      setSummaryRefreshKey((k) => k + 1);
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [fetchAll]);
 
   const prevMonth = () => {
     if (month === 1) {
@@ -49,6 +99,46 @@ export function HistoryPage({ onBack }: Props) {
       setMonth(month + 1);
     }
   };
+
+  const handleUpdate = useCallback(
+    async (id: number, newTimestamp: string) => {
+      await updateEvent(id, newTimestamp);
+      await fetchAll();
+      setSummaryRefreshKey((k) => k + 1);
+    },
+    [fetchAll],
+  );
+
+  const handleDelete = useCallback(
+    async (id: number) => {
+      await deleteEvent(id);
+      await fetchAll();
+      setSummaryRefreshKey((k) => k + 1);
+    },
+    [fetchAll],
+  );
+
+  const handleAddClockOut = useCallback(
+    async (
+      dateKey: string,
+      wsId: number,
+      newTimestamp: string,
+      breakEndTimestamp?: string,
+    ) => {
+      await addMissingClockOutForDate(dateKey, wsId, newTimestamp, breakEndTimestamp);
+      await fetchAll();
+      setSummaryRefreshKey((k) => k + 1);
+    },
+    [fetchAll],
+  );
+
+  const dayGroups = useMemo(() => groupByDayAndWorkspace(events), [events]);
+  const showWorkspaceLabel = workspaces.length > 1 && filterWsId === undefined;
+  const workspaceById = useMemo(() => {
+    const m = new Map<number, (typeof workspaces)[number]>();
+    for (const ws of workspaces) m.set(ws.id, ws);
+    return m;
+  }, [workspaces]);
 
   return (
     <div style={{ padding: "24px", maxWidth: "520px", margin: "0 auto" }}>
@@ -138,8 +228,42 @@ export function HistoryPage({ onBack }: Props) {
         <DailyChart records={records} />
       )}
 
-      {/* サマリー */}
-      {!loading && <MonthlySummary year={year} month={month} workspaceId={filterWsId} />}
+      {/* 日別記録（クリックで展開して編集） */}
+      {!loading && dayGroups.length > 0 && (
+        <div style={{ marginTop: "24px" }}>
+          <h3 style={{ fontSize: "15px", color: "#374151", margin: "0 0 8px 0" }}>日別記録</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            {dayGroups.map((g) => {
+              const key = `${g.dateKey}:${g.workspaceId}`;
+              return (
+                <DayAccordion
+                  key={key}
+                  dateKey={g.dateKey}
+                  workspaceId={g.workspaceId}
+                  workspace={workspaceById.get(g.workspaceId)}
+                  events={g.events}
+                  expanded={expandedKey === key}
+                  onToggle={() => setExpandedKey(expandedKey === key ? null : key)}
+                  onUpdate={handleUpdate}
+                  onDelete={handleDelete}
+                  onAddMissingClockOut={handleAddClockOut}
+                  showWorkspaceLabel={showWorkspaceLabel}
+                />
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* サマリー（編集後は key 変更で再マウントして再フェッチ） */}
+      {!loading && (
+        <MonthlySummary
+          key={summaryRefreshKey}
+          year={year}
+          month={month}
+          workspaceId={filterWsId}
+        />
+      )}
     </div>
   );
 }

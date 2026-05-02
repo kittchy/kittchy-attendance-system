@@ -234,6 +234,8 @@ pub fn run() {
             commands::attendance::update_event,
             commands::attendance::delete_event,
             commands::attendance::add_missing_clock_out,
+            commands::attendance::add_missing_clock_out_for_date,
+            commands::attendance::get_events_by_month,
             commands::settings::get_settings,
             commands::settings::update_setting,
             commands::summary::get_daily_records,
