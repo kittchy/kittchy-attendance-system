@@ -1,5 +1,11 @@
 import { useRef, useState } from "react";
-import { buildExtendedTimestamp, eventTypeLabel, formatExtendedTime } from "../lib/formatters";
+import {
+  TIME_FORMAT_ERROR,
+  buildExtendedTimestamp,
+  eventTypeLabel,
+  formatDateTimeLabel,
+  formatExtendedTime,
+} from "../lib/formatters";
 import type { StampEvent } from "../types";
 
 interface EventRowProps {
@@ -16,11 +22,15 @@ export function EventRow({ event, onUpdate, onDelete }: EventRowProps) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // 勤務日の0時基準で表示・編集する（深夜勤務は 25:30:00 のような 24 時超え表記）
-  const displayTime = formatExtendedTime(event.date_key, event.timestamp);
+  // 勤務日の0時基準で表示・編集する（深夜勤務は 25:30:00 のような 24 時超え表記）。
+  // 勤務日より前や 48 時間以上先の時刻は 24 時超え表記で往復できないため、編集させない
+  const extendedTime = formatExtendedTime(event.date_key, event.timestamp);
+  const editable = extendedTime !== null;
+  const displayTime = extendedTime ?? formatDateTimeLabel(event.timestamp);
 
   const startEdit = () => {
-    setEditValue(displayTime);
+    if (!editable) return;
+    setEditValue(extendedTime);
     setError(null);
     setEditing(true);
     setTimeout(() => inputRef.current?.focus(), 0);
@@ -31,15 +41,21 @@ export function EventRow({ event, onUpdate, onDelete }: EventRowProps) {
     setError(null);
   };
 
+  // 入力エラーを表示している間は、フォーカスが外れても入力内容を捨てない
+  const handleBlur = () => {
+    if (error !== null) return;
+    cancelEdit();
+  };
+
   const confirmEdit = async () => {
     if (saving) return;
-    if (editValue === displayTime) {
+    if (editValue === extendedTime) {
       cancelEdit();
       return;
     }
     const newTimestamp = buildExtendedTimestamp(event.date_key, editValue);
     if (newTimestamp === null) {
-      setError("時刻は HH:MM または HH:MM:SS で入力してください（24時以降は 25:30 のように指定）");
+      setError(TIME_FORMAT_ERROR);
       return;
     }
     setSaving(true);
@@ -107,7 +123,7 @@ export function EventRow({ event, onUpdate, onDelete }: EventRowProps) {
             size={9}
             value={editValue}
             onChange={(e) => setEditValue(e.target.value)}
-            onBlur={cancelEdit}
+            onBlur={handleBlur}
             onKeyDown={handleKeyDown}
             disabled={saving}
             style={{
@@ -122,12 +138,12 @@ export function EventRow({ event, onUpdate, onDelete }: EventRowProps) {
         ) : (
           <span
             onClick={startEdit}
-            title="クリックして時刻を修正"
+            title={editable ? "クリックして時刻を修正" : "勤務日から離れた時刻のため編集できません"}
             style={{
               color: "#9ca3af",
               fontFamily: "monospace",
-              cursor: "pointer",
-              borderBottom: "1px dashed #d1d5db",
+              cursor: editable ? "pointer" : "default",
+              borderBottom: editable ? "1px dashed #d1d5db" : "none",
             }}
           >
             {displayTime}

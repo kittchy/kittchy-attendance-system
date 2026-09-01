@@ -1,11 +1,34 @@
 import { useState } from "react";
-import { buildExtendedTimestamp } from "../lib/formatters";
+import { TIME_FORMAT_ERROR, buildExtendedTimestamp, formatExtendedTime } from "../lib/formatters";
 import type { StampEvent, WorkStatus } from "../types";
 import { EventRow } from "./EventRow";
 
-/** 時刻入力のフォーマットエラー文言 */
-const TIME_FORMAT_ERROR =
-  "時刻は HH:MM または HH:MM:SS で入力してください（24時以降は 25:30 のように指定）";
+/** 退勤時刻の既定値。直前のイベントがこれより後なら、そこから初期値を決める */
+const DEFAULT_CLOCK_OUT = "18:00";
+const DEFAULT_BREAK_END = "17:30";
+
+/**
+ * 退勤追加フォームの初期値を決める。
+ * 直前のイベントが 18:00 より後（深夜勤務など）の場合は、その 30 分後を初期値にする
+ */
+function initialFixTimes(
+  dateKey: string,
+  sessionEvents: StampEvent[],
+): { clockOut: string; breakEnd: string } {
+  const last = sessionEvents[sessionEvents.length - 1];
+  const lastTime = last ? formatExtendedTime(dateKey, last.timestamp) : null;
+  if (lastTime === null || lastTime <= DEFAULT_BREAK_END) {
+    return { clockOut: DEFAULT_CLOCK_OUT, breakEnd: DEFAULT_BREAK_END };
+  }
+
+  const [h, m] = lastTime.split(":").map(Number);
+  const p = (n: number) => String(n).padStart(2, "0");
+  const shift = (addMinutes: number) => {
+    const total = h * 60 + m + addMinutes;
+    return `${p(Math.floor(total / 60))}:${p(total % 60)}`;
+  };
+  return { clockOut: shift(30), breakEnd: shift(1) };
+}
 
 interface Props {
   dateKey: string;
@@ -68,8 +91,9 @@ export function DayEventList({
   const [fixSaving, setFixSaving] = useState(false);
 
   const openFixForm = () => {
-    setFixBreakEndTime("17:30");
-    setFixTime("18:00");
+    const initial = initialFixTimes(dateKey, sessionEvents);
+    setFixBreakEndTime(initial.breakEnd);
+    setFixTime(initial.clockOut);
     setFixError(null);
     setShowFixForm(true);
   };

@@ -7,6 +7,7 @@ import { useWorkspaces } from "../hooks/useWorkspaces";
 import {
   addMissingClockOutForDate,
   deleteEvent,
+  getCurrentStatus,
   getDailyRecords,
   getEventsByMonth,
   updateEvent,
@@ -50,18 +51,22 @@ export function HistoryPage({ onBack }: Props) {
   const [loading, setLoading] = useState(true);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [summaryRefreshKey, setSummaryRefreshKey] = useState(0);
+  // 勤務中セッションの date_key。0 時をまたいでも当日分の勤務時間を表示するために使う
+  const [activeDateKey, setActiveDateKey] = useState<string | null>(null);
   const { workspaces } = useWorkspaces();
   const [filterWsId, setFilterWsId] = useState<number | undefined>(undefined);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [r, e] = await Promise.all([
+      const [r, e, status] = await Promise.all([
         getDailyRecords(year, month, filterWsId),
         getEventsByMonth(year, month, filterWsId),
+        getCurrentStatus(),
       ]);
       setRecords(r);
       setEvents(e);
+      setActiveDateKey(status.status === "idle" ? null : status.date_key);
     } finally {
       setLoading(false);
     }
@@ -248,6 +253,7 @@ export function HistoryPage({ onBack }: Props) {
                   onDelete={handleDelete}
                   onAddMissingClockOut={handleAddClockOut}
                   showWorkspaceLabel={showWorkspaceLabel}
+                  activeDateKey={activeDateKey}
                 />
               );
             })}

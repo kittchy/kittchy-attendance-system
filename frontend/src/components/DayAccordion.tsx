@@ -17,6 +17,8 @@ interface Props {
     breakEndTimestamp?: string,
   ) => Promise<void>;
   showWorkspaceLabel: boolean;
+  /** 勤務中セッションの date_key。この日だけ未退勤でも現在時刻まで集計する */
+  activeDateKey: string | null;
 }
 
 const WEEKDAY_JP = ["日", "月", "火", "水", "木", "金", "土"];
@@ -85,15 +87,19 @@ function splitSessions(events: StampEvent[]): WorkSession[] {
 
 /**
  * 当該イベント列の勤務分数を計算する（全セッションの合計）。
- * clock_out が無いセッションは、今日の最終セッションのときだけ「現在」を終端とする
+ * clock_out が無いセッションは、勤務中の日の最終セッションのときだけ「現在」を終端とする。
+ * 深夜勤務で 0 時をまたぐと date_key と今日の日付がずれるため、
+ * 日付の一致ではなく勤務中セッションの date_key で判定する
  */
-function calcWorkMinutes(dateKey: string, events: StampEvent[]): number | null {
+function calcWorkMinutes(
+  dateKey: string,
+  events: StampEvent[],
+  activeDateKey: string | null,
+): number | null {
   const sessions = splitSessions(events);
   if (sessions.length === 0) return null;
 
-  const today = new Date();
-  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-  const fallbackEndMs = dateKey === todayKey ? Date.now() : null;
+  const fallbackEndMs = activeDateKey === dateKey ? Date.now() : null;
 
   let workMs = 0;
   let counted = false;
@@ -138,8 +144,9 @@ export function DayAccordion({
   onDelete,
   onAddMissingClockOut,
   showWorkspaceLabel,
+  activeDateKey,
 }: Props) {
-  const workMinutes = calcWorkMinutes(dateKey, events);
+  const workMinutes = calcWorkMinutes(dateKey, events, activeDateKey);
   const missing = hasMissingClockOut(events);
 
   return (
