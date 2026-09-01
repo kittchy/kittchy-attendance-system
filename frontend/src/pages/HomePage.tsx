@@ -4,19 +4,8 @@ import { EventRow } from "../components/EventRow";
 import { StatusBadge } from "../components/StatusBadge";
 import { useAttendance } from "../hooks/useAttendance";
 import { useWorkspaces } from "../hooks/useWorkspaces";
-import { buildExtendedTimestamp } from "../lib/formatters";
+import { TIME_FORMAT_ERROR, buildExtendedTimestamp, todayKey } from "../lib/formatters";
 import type { EventType } from "../types";
-
-/** 今日の date_key（"YYYY-MM-DD"）を返す */
-function todayKey(): string {
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
-
-/** 時刻入力のフォーマットエラー文言 */
-const TIME_FORMAT_ERROR =
-  "時刻は HH:MM または HH:MM:SS で入力してください（24時以降は 25:30 のように指定）";
 
 interface Props {
   onNavigateHistory: () => void;
