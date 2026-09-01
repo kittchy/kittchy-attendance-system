@@ -21,6 +21,10 @@ pub fn get_daily_records(
 ) -> Result<Vec<DailyRecord>, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let events = query_month_events(&db, year, month, workspace_id)?;
+    // 勤務中のセッションがある日は、未退勤でも現在時刻までを勤務時間として扱う
+    let active_date_key =
+        crate::commands::attendance::get_active_session(&db)?.map(|(date_key, _)| date_key);
+    let active_date_key = active_date_key.as_deref();
 
     let mut records: Vec<DailyRecord> = Vec::new();
     let mut current_key = String::new();
@@ -29,7 +33,7 @@ pub fn get_daily_records(
     for event in &events {
         if event.date_key != current_key {
             if !group.is_empty() {
-                if let Some(record) = calc_daily_record(&current_key, &group) {
+                if let Some(record) = calc_daily_record(&current_key, &group, active_date_key) {
                     records.push(record);
                 }
             }
@@ -39,7 +43,7 @@ pub fn get_daily_records(
         group.push(event);
     }
     if !group.is_empty() {
-        if let Some(record) = calc_daily_record(&current_key, &group) {
+        if let Some(record) = calc_daily_record(&current_key, &group, active_date_key) {
             records.push(record);
         }
     }
@@ -225,20 +229,49 @@ fn split_sessions(events: &[&StampEvent]) -> Vec<WorkSession> {
     sessions
 }
 
-/// 当日なら現在時刻を返す。過去日の退勤漏れセッションは集計対象外にするため None
-fn now_if_today(date_key: &str) -> Option<DateTime<FixedOffset>> {
-    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    if date_key == today {
+/// 勤務中のセッションがある日だけ、未退勤セッションの終端に現在時刻を使う。
+/// 深夜勤務で 0 時をまたぐと date_key（勤務日）と今日の日付がずれるため、
+/// 日付の一致ではなくアクティブセッションの date_key で判定する
+fn now_if_active(date_key: &str, active_date_key: Option<&str>) -> Option<DateTime<FixedOffset>> {
+    if active_date_key == Some(date_key) {
         Some(chrono::Local::now().fixed_offset())
     } else {
         None
     }
 }
 
+/// 勤務日の 0 時を基準にした 24 時超え表記を返す（翌日 01:30 → "25:30:00"）。
+/// 勤務日から 48 時間以上離れた時刻は通常の時刻表記にフォールバックする
+fn format_extended_time(date_key: &str, dt: DateTime<FixedOffset>) -> String {
+    let base = NaiveDate::parse_from_str(date_key, "%Y-%m-%d")
+        .ok()
+        .and_then(|d| d.and_hms_opt(0, 0, 0))
+        .and_then(|naive| naive.and_local_timezone(dt.timezone()).single());
+
+    let secs = match base {
+        Some(base) => (dt - base).num_seconds(),
+        None => return dt.format("%H:%M:%S").to_string(),
+    };
+    if !(0..48 * 3600).contains(&secs) {
+        return dt.format("%H:%M:%S").to_string();
+    }
+
+    format!(
+        "{:02}:{:02}:{:02}",
+        secs / 3600,
+        (secs % 3600) / 60,
+        secs % 60
+    )
+}
+
 /// 1日のイベント列から勤務時間・休憩時間を計算する（全セッションの合計）
-fn calc_daily_record(date_key: &str, events: &[&StampEvent]) -> Option<DailyRecord> {
+fn calc_daily_record(
+    date_key: &str,
+    events: &[&StampEvent],
+    active_date_key: Option<&str>,
+) -> Option<DailyRecord> {
     let sessions = split_sessions(events);
-    let fallback_end = now_if_today(date_key);
+    let fallback_end = now_if_active(date_key, active_date_key);
 
     let mut work_secs: i64 = 0;
     let mut break_secs: i64 = 0;
@@ -293,8 +326,8 @@ fn format_daily_summary(date_key: &str, events: &[&StampEvent]) -> Option<(Strin
         break_secs += b;
         ranges.push(format!(
             "{}-{}",
-            session.start.format("%H:%M:%S"),
-            end.format("%H:%M:%S")
+            format_extended_time(date_key, session.start),
+            format_extended_time(date_key, end)
         ));
     }
 
@@ -370,7 +403,7 @@ mod tests {
         ];
         let refs: Vec<&StampEvent> = events.iter().collect();
 
-        let record = calc_daily_record(DATE_KEY, &refs).unwrap();
+        let record = calc_daily_record(DATE_KEY, &refs, None).unwrap();
         // 1時間50分 + 1時間47分 = 3時間37分 = 217分
         assert_eq!(record.work_minutes, 217.0);
         assert_eq!(record.break_minutes, 0.0);
@@ -394,7 +427,7 @@ mod tests {
         ];
         let refs: Vec<&StampEvent> = events.iter().collect();
 
-        let record = calc_daily_record(DATE_KEY, &refs).unwrap();
+        let record = calc_daily_record(DATE_KEY, &refs, None).unwrap();
         assert_eq!(record.work_minutes, 480.0);
         assert_eq!(record.break_minutes, 60.0);
     }
@@ -408,11 +441,41 @@ mod tests {
         ];
         let refs: Vec<&StampEvent> = events.iter().collect();
 
-        let record = calc_daily_record(DATE_KEY, &refs).unwrap();
+        let record = calc_daily_record(DATE_KEY, &refs, None).unwrap();
         assert_eq!(record.work_minutes, 270.0);
 
+        // 退勤は翌日 01:30 だが、勤務日基準で 25:30 と表記する
         let (line, _) = format_daily_summary(DATE_KEY, &refs).unwrap();
-        assert_eq!(line, "- 9/1(Tue): 4時間30分 (21:00:00-01:30:00)");
+        assert_eq!(line, "- 9/1(Tue): 4時間30分 (21:00:00-25:30:00)");
+    }
+
+    /// 勤務中のセッションは、0 時をまたいで日付が変わっても集計対象に残る
+    #[test]
+    fn keeps_active_session_after_midnight() {
+        // 昨日 21:00 出勤で今も勤務中。date_key は昨日のまま、現在日付は今日になる
+        let yesterday = (chrono::Local::now() - chrono::Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string();
+        let clock_in = (chrono::Local::now() - chrono::Duration::hours(3)).to_rfc3339();
+        let events = vec![ev_on(&yesterday, "clock_in", &clock_in)];
+        let refs: Vec<&StampEvent> = events.iter().collect();
+
+        // アクティブセッションの date_key を渡せば、未退勤でも現在時刻まで集計される
+        let record = calc_daily_record(&yesterday, &refs, Some(&yesterday)).unwrap();
+        assert!((record.work_minutes - 180.0).abs() < 1.0);
+
+        // 勤務中でなければ従来どおり集計対象外
+        assert!(calc_daily_record(&yesterday, &refs, None).is_none());
+    }
+
+    /// 勤務日から 48 時間以上離れた時刻は通常の時刻表記にフォールバックする
+    #[test]
+    fn falls_back_beyond_48_hours() {
+        let dt = DateTime::parse_from_rfc3339("2026-09-04T10:00:00+09:00").unwrap();
+        assert_eq!(format_extended_time(DATE_KEY, dt), "10:00:00");
+
+        let within = DateTime::parse_from_rfc3339("2026-09-02T01:30:00+09:00").unwrap();
+        assert_eq!(format_extended_time(DATE_KEY, within), "25:30:00");
     }
 
     /// 過去日の退勤漏れセッションは集計から外し、退勤済みのセッションだけ数える
@@ -427,7 +490,7 @@ mod tests {
         ];
         let refs: Vec<&StampEvent> = events.iter().collect();
 
-        let record = calc_daily_record(past, &refs).unwrap();
+        let record = calc_daily_record(past, &refs, None).unwrap();
         assert_eq!(record.work_minutes, 180.0);
 
         let (_, secs) = format_daily_summary(past, &refs).unwrap();

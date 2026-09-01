@@ -308,7 +308,9 @@ fn query_latest_session_events(
 
 /// アクティブな勤務セッション（退勤していない最新のclock_in）を探す
 /// 返り値: (date_key, workspace_id)
-fn get_active_session(db: &rusqlite::Connection) -> Result<Option<(String, i64)>, String> {
+pub(crate) fn get_active_session(
+    db: &rusqlite::Connection,
+) -> Result<Option<(String, i64)>, String> {
     let result: Result<Option<(i64, String, i64)>, _> = db
         .query_row(
             "SELECT id, date_key, workspace_id FROM stamp_events \
