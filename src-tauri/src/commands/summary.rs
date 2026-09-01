@@ -149,48 +149,122 @@ fn query_month_events(
     }
 }
 
-/// 1日のイベント列から勤務時間・休憩時間を計算する
-fn calc_daily_record(date_key: &str, events: &[&StampEvent]) -> Option<DailyRecord> {
-    let clock_in = events.iter().find(|e| e.event_type == "clock_in")?;
-    let clock_out = events.iter().rev().find(|e| e.event_type == "clock_out");
+/// 出勤から退勤までの1セッション
+struct WorkSession {
+    start: DateTime<FixedOffset>,
+    /// 退勤済みなら退勤時刻。退勤漏れの場合は None
+    end: Option<DateTime<FixedOffset>>,
+    break_secs: i64,
+    /// break_end が来ていない休憩の開始時刻
+    pending_break_start: Option<DateTime<FixedOffset>>,
+}
 
-    let start = parse_timestamp(&clock_in.timestamp)?;
-    let end = clock_out
-        .and_then(|e| parse_timestamp(&e.timestamp))
-        .or_else(|| {
-            let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-            if date_key == today {
-                Some(chrono::Local::now().fixed_offset())
-            } else {
-                None
-            }
-        })?;
+impl WorkSession {
+    /// 指定した終端時刻での (実労働秒数, 休憩秒数) を返す
+    fn durations(&self, end: DateTime<FixedOffset>) -> (i64, i64) {
+        let mut break_secs = self.break_secs;
+        if let Some(bs) = self.pending_break_start {
+            break_secs += (end - bs).num_seconds().max(0);
+        }
+        let work_secs = ((end - self.start).num_seconds() - break_secs).max(0);
+        (work_secs, break_secs)
+    }
+}
 
-    let total_minutes = (end - start).num_seconds() as f64 / 60.0;
-
-    let mut break_minutes = 0.0;
-    let mut break_start: Option<DateTime<FixedOffset>> = None;
+/// 1日のイベント列を「出勤〜退勤」のセッション単位に分割する。
+/// 1日に複数回の出退勤があっても、セッション間の空き時間を勤務時間に含めない
+fn split_sessions(events: &[&StampEvent]) -> Vec<WorkSession> {
+    let mut sessions: Vec<WorkSession> = Vec::new();
+    let mut current: Option<WorkSession> = None;
 
     for event in events {
+        let ts = match parse_timestamp(&event.timestamp) {
+            Some(ts) => ts,
+            None => continue,
+        };
         match event.event_type.as_str() {
+            "clock_in" => {
+                // 退勤漏れのまま次の出勤が来た場合、前のセッションは未完了のまま残す
+                if let Some(prev) = current.take() {
+                    sessions.push(prev);
+                }
+                current = Some(WorkSession {
+                    start: ts,
+                    end: None,
+                    break_secs: 0,
+                    pending_break_start: None,
+                });
+            }
+            "clock_out" => {
+                if let Some(mut session) = current.take() {
+                    if let Some(bs) = session.pending_break_start.take() {
+                        session.break_secs += (ts - bs).num_seconds().max(0);
+                    }
+                    session.end = Some(ts);
+                    sessions.push(session);
+                }
+            }
             "break_start" => {
-                break_start = parse_timestamp(&event.timestamp);
+                if let Some(session) = current.as_mut() {
+                    session.pending_break_start = Some(ts);
+                }
             }
             "break_end" => {
-                if let (Some(bs), Some(be)) =
-                    (break_start.take(), parse_timestamp(&event.timestamp))
-                {
-                    break_minutes += (be - bs).num_seconds() as f64 / 60.0;
+                if let Some(session) = current.as_mut() {
+                    if let Some(bs) = session.pending_break_start.take() {
+                        session.break_secs += (ts - bs).num_seconds().max(0);
+                    }
                 }
             }
             _ => {}
         }
     }
-    if let Some(bs) = break_start {
-        break_minutes += (end - bs).num_seconds().max(0) as f64 / 60.0;
+    if let Some(session) = current {
+        sessions.push(session);
+    }
+    sessions
+}
+
+/// 当日なら現在時刻を返す。過去日の退勤漏れセッションは集計対象外にするため None
+fn now_if_today(date_key: &str) -> Option<DateTime<FixedOffset>> {
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    if date_key == today {
+        Some(chrono::Local::now().fixed_offset())
+    } else {
+        None
+    }
+}
+
+/// 1日のイベント列から勤務時間・休憩時間を計算する（全セッションの合計）
+fn calc_daily_record(date_key: &str, events: &[&StampEvent]) -> Option<DailyRecord> {
+    let sessions = split_sessions(events);
+    let fallback_end = now_if_today(date_key);
+
+    let mut work_secs: i64 = 0;
+    let mut break_secs: i64 = 0;
+    let mut counted = false;
+
+    let last_idx = sessions.len().saturating_sub(1);
+    for (i, session) in sessions.iter().enumerate() {
+        // 未退勤に「現在」を当てるのは最後のセッションだけ。
+        // 退勤漏れのまま再出勤した日で、前のセッションまで現在時刻まで伸びるのを防ぐ
+        let fallback = if i == last_idx { fallback_end } else { None };
+        let end = match session.end.or(fallback) {
+            Some(end) => end,
+            None => continue,
+        };
+        let (w, b) = session.durations(end);
+        work_secs += w;
+        break_secs += b;
+        counted = true;
     }
 
-    let work_minutes = (total_minutes - break_minutes).max(0.0);
+    if !counted {
+        return None;
+    }
+
+    let work_minutes = work_secs as f64 / 60.0;
+    let break_minutes = break_secs as f64 / 60.0;
 
     Some(DailyRecord {
         date_key: date_key.to_string(),
@@ -199,36 +273,35 @@ fn calc_daily_record(date_key: &str, events: &[&StampEvent]) -> Option<DailyReco
     })
 }
 
-/// 1日分のサマリー行を生成する。(行テキスト, 実労働秒数) を返す
+/// 1日分のサマリー行を生成する。(行テキスト, 実労働秒数) を返す。
+/// 複数セッションある日は勤務時間を合計し、時刻は全セッションを併記する
 fn format_daily_summary(date_key: &str, events: &[&StampEvent]) -> Option<(String, i64)> {
-    let clock_in = events.iter().find(|e| e.event_type == "clock_in")?;
-    let clock_out = events.iter().rev().find(|e| e.event_type == "clock_out")?;
+    let sessions = split_sessions(events);
 
-    let start = parse_timestamp(&clock_in.timestamp)?;
-    let end = parse_timestamp(&clock_out.timestamp)?;
-
+    let mut work_secs: i64 = 0;
     let mut break_secs: i64 = 0;
-    let mut break_start: Option<DateTime<FixedOffset>> = None;
-    for event in events {
-        match event.event_type.as_str() {
-            "break_start" => {
-                break_start = parse_timestamp(&event.timestamp);
-            }
-            "break_end" => {
-                if let (Some(bs), Some(be)) =
-                    (break_start.take(), parse_timestamp(&event.timestamp))
-                {
-                    break_secs += (be - bs).num_seconds();
-                }
-            }
-            _ => {}
-        }
-    }
-    if let Some(bs) = break_start {
-        break_secs += (end - bs).num_seconds().max(0);
+    let mut ranges: Vec<String> = Vec::new();
+
+    for session in &sessions {
+        // 退勤済みのセッションのみ集計する
+        let end = match session.end {
+            Some(end) => end,
+            None => continue,
+        };
+        let (w, b) = session.durations(end);
+        work_secs += w;
+        break_secs += b;
+        ranges.push(format!(
+            "{}-{}",
+            session.start.format("%H:%M:%S"),
+            end.format("%H:%M:%S")
+        ));
     }
 
-    let work_secs = ((end - start).num_seconds() - break_secs).max(0);
+    if ranges.is_empty() {
+        return None;
+    }
+
     let work_hours = work_secs / 3600;
     let work_minutes = (work_secs % 3600) / 60;
 
@@ -243,21 +316,19 @@ fn format_daily_summary(date_key: &str, events: &[&StampEvent]) -> Option<(Strin
         chrono::Weekday::Sun => "Sun",
     };
     let date_str = format!("{}/{}({})", date.month(), date.day(), weekday);
-
-    let start_time = start.format("%H:%M:%S");
-    let end_time = end.format("%H:%M:%S");
+    let range_str = ranges.join(", ");
 
     let line = if break_secs > 0 {
         let break_hours = break_secs / 3600;
         let break_mins = (break_secs % 3600) / 60;
         format!(
-            "- {}: {}時間{}分 ({}-{} ※{}時間{}分の中抜け含む)",
-            date_str, work_hours, work_minutes, start_time, end_time, break_hours, break_mins
+            "- {}: {}時間{}分 ({} ※{}時間{}分の中抜け含む)",
+            date_str, work_hours, work_minutes, range_str, break_hours, break_mins
         )
     } else {
         format!(
-            "- {}: {}時間{}分 ({}-{})",
-            date_str, work_hours, work_minutes, start_time, end_time
+            "- {}: {}時間{}分 ({})",
+            date_str, work_hours, work_minutes, range_str
         )
     };
 
@@ -266,4 +337,100 @@ fn format_daily_summary(date_key: &str, events: &[&StampEvent]) -> Option<(Strin
 
 fn parse_timestamp(ts: &str) -> Option<DateTime<FixedOffset>> {
     DateTime::parse_from_rfc3339(ts).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DATE_KEY: &str = "2026-09-01";
+
+    fn ev(event_type: &str, timestamp: &str) -> StampEvent {
+        ev_on(DATE_KEY, event_type, timestamp)
+    }
+
+    fn ev_on(date_key: &str, event_type: &str, timestamp: &str) -> StampEvent {
+        StampEvent {
+            id: 0,
+            event_type: event_type.to_string(),
+            timestamp: timestamp.to_string(),
+            date_key: date_key.to_string(),
+            workspace_id: 1,
+        }
+    }
+
+    /// 1日に2回出退勤した日は、セッション間の空き時間を含めず合計する
+    #[test]
+    fn sums_multiple_sessions() {
+        let events = vec![
+            ev("clock_in", "2026-09-01T07:07:00+09:00"),
+            ev("clock_out", "2026-09-01T08:57:00+09:00"),
+            ev("clock_in", "2026-09-01T21:58:00+09:00"),
+            ev("clock_out", "2026-09-01T23:45:00+09:00"),
+        ];
+        let refs: Vec<&StampEvent> = events.iter().collect();
+
+        let record = calc_daily_record(DATE_KEY, &refs).unwrap();
+        // 1時間50分 + 1時間47分 = 3時間37分 = 217分
+        assert_eq!(record.work_minutes, 217.0);
+        assert_eq!(record.break_minutes, 0.0);
+
+        let (line, secs) = format_daily_summary(DATE_KEY, &refs).unwrap();
+        assert_eq!(secs, 217 * 60);
+        assert_eq!(
+            line,
+            "- 9/1(Tue): 3時間37分 (07:07:00-08:57:00, 21:58:00-23:45:00)"
+        );
+    }
+
+    /// 休憩はそのセッション内だけを差し引く
+    #[test]
+    fn subtracts_break_within_session() {
+        let events = vec![
+            ev("clock_in", "2026-09-01T09:00:00+09:00"),
+            ev("break_start", "2026-09-01T12:00:00+09:00"),
+            ev("break_end", "2026-09-01T13:00:00+09:00"),
+            ev("clock_out", "2026-09-01T18:00:00+09:00"),
+        ];
+        let refs: Vec<&StampEvent> = events.iter().collect();
+
+        let record = calc_daily_record(DATE_KEY, &refs).unwrap();
+        assert_eq!(record.work_minutes, 480.0);
+        assert_eq!(record.break_minutes, 60.0);
+    }
+
+    /// 24 時をまたぐ勤務は、勤務日の date_key のまま翌日の timestamp で集計できる
+    #[test]
+    fn handles_overnight_session() {
+        let events = vec![
+            ev("clock_in", "2026-09-01T21:00:00+09:00"),
+            ev("clock_out", "2026-09-02T01:30:00+09:00"),
+        ];
+        let refs: Vec<&StampEvent> = events.iter().collect();
+
+        let record = calc_daily_record(DATE_KEY, &refs).unwrap();
+        assert_eq!(record.work_minutes, 270.0);
+
+        let (line, _) = format_daily_summary(DATE_KEY, &refs).unwrap();
+        assert_eq!(line, "- 9/1(Tue): 4時間30分 (21:00:00-01:30:00)");
+    }
+
+    /// 過去日の退勤漏れセッションは集計から外し、退勤済みのセッションだけ数える
+    #[test]
+    fn skips_unclosed_session_on_past_day() {
+        // 「今日」だと未退勤セッションに現在時刻が当たるため、過去日で検証する
+        let past = "2020-06-15";
+        let events = vec![
+            ev_on(past, "clock_in", "2020-06-15T09:00:00+09:00"),
+            ev_on(past, "clock_out", "2020-06-15T12:00:00+09:00"),
+            ev_on(past, "clock_in", "2020-06-15T14:00:00+09:00"),
+        ];
+        let refs: Vec<&StampEvent> = events.iter().collect();
+
+        let record = calc_daily_record(past, &refs).unwrap();
+        assert_eq!(record.work_minutes, 180.0);
+
+        let (_, secs) = format_daily_summary(past, &refs).unwrap();
+        assert_eq!(secs, 180 * 60);
+    }
 }
