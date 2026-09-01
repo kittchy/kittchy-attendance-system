@@ -4,8 +4,19 @@ import { EventRow } from "../components/EventRow";
 import { StatusBadge } from "../components/StatusBadge";
 import { useAttendance } from "../hooks/useAttendance";
 import { useWorkspaces } from "../hooks/useWorkspaces";
-import { buildLocalTimestamp } from "../lib/formatters";
+import { buildExtendedTimestamp } from "../lib/formatters";
 import type { EventType } from "../types";
+
+/** 今日の date_key（"YYYY-MM-DD"）を返す */
+function todayKey(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/** 時刻入力のフォーマットエラー文言 */
+const TIME_FORMAT_ERROR =
+  "時刻は HH:MM または HH:MM:SS で入力してください（24時以降は 25:30 のように指定）";
 
 interface Props {
   onNavigateHistory: () => void;
@@ -26,8 +37,8 @@ export function HomePage({ onNavigateHistory, onNavigateSettings }: Props) {
   const { workspaces, loading: wsLoading } = useWorkspaces();
   const [selectedWsId, setSelectedWsId] = useState<number | null>(null);
   const [showFixForm, setShowFixForm] = useState(false);
-  const [fixDateTime, setFixDateTime] = useState("");
-  const [fixBreakEndDateTime, setFixBreakEndDateTime] = useState("");
+  const [fixTime, setFixTime] = useState("");
+  const [fixBreakEndTime, setFixBreakEndTime] = useState("");
   const [fixError, setFixError] = useState<string | null>(null);
   const [fixSaving, setFixSaving] = useState(false);
 
@@ -48,27 +59,30 @@ export function HomePage({ onNavigateHistory, onNavigateSettings }: Props) {
   const showWorkspaceSelector = status.status === "idle" && workspaces.length > 1;
 
   const openFixForm = () => {
-    const base = status.clock_in_time ? new Date(status.clock_in_time) : new Date();
-    const y = base.getFullYear();
-    const m = String(base.getMonth() + 1).padStart(2, "0");
-    const d = String(base.getDate()).padStart(2, "0");
-    setFixBreakEndDateTime(`${y}-${m}-${d}T17:30`);
-    setFixDateTime(`${y}-${m}-${d}T18:00`);
+    setFixBreakEndTime("17:30");
+    setFixTime("18:00");
     setFixError(null);
     setShowFixForm(true);
   };
 
   const submitFix = async () => {
-    if (!fixDateTime || fixSaving) return;
+    if (!fixTime || fixSaving) return;
     const needsBreakEnd = status.status === "on_break";
-    if (needsBreakEnd && !fixBreakEndDateTime) return;
+    if (needsBreakEnd && !fixBreakEndTime) return;
+
+    // 勤務日の0時基準で解釈するので、25:30 のような 24 時超えも指定できる
+    const dateKey = status.date_key ?? todayKey();
+    const clockOutTs = buildExtendedTimestamp(dateKey, fixTime);
+    const breakEndTs = needsBreakEnd ? buildExtendedTimestamp(dateKey, fixBreakEndTime) : undefined;
+    if (clockOutTs === null || (needsBreakEnd && breakEndTs === null)) {
+      setFixError(TIME_FORMAT_ERROR);
+      return;
+    }
+
     setFixSaving(true);
     setFixError(null);
     try {
-      await doAddMissingClockOut(
-        buildLocalTimestamp(fixDateTime),
-        needsBreakEnd ? buildLocalTimestamp(fixBreakEndDateTime) : undefined,
-      );
+      await doAddMissingClockOut(clockOutTs, breakEndTs ?? undefined);
       setShowFixForm(false);
     } catch (err) {
       setFixError(String(err));
@@ -173,6 +187,9 @@ export function HomePage({ onNavigateHistory, onNavigateSettings }: Props) {
               >
                 退勤時刻を指定（Slack通知は送信されません）
               </div>
+              <div style={{ fontSize: "12px", color: "#9ca3af", marginBottom: "8px" }}>
+                深夜まで働いた日は 25:30 のように 24 時以降で入力できます
+              </div>
               {status.status === "on_break" && (
                 <div style={{ marginBottom: "8px" }}>
                   <label
@@ -186,12 +203,16 @@ export function HomePage({ onNavigateHistory, onNavigateSettings }: Props) {
                     休憩終了時刻
                   </label>
                   <input
-                    type="datetime-local"
-                    value={fixBreakEndDateTime}
-                    onChange={(e) => setFixBreakEndDateTime(e.target.value)}
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="17:30"
+                    size={9}
+                    value={fixBreakEndTime}
+                    onChange={(e) => setFixBreakEndTime(e.target.value)}
                     disabled={fixSaving}
                     style={{
                       fontSize: "14px",
+                      fontFamily: "monospace",
                       padding: "4px 8px",
                       border: "1px solid #d1d5db",
                       borderRadius: "6px",
@@ -211,12 +232,16 @@ export function HomePage({ onNavigateHistory, onNavigateSettings }: Props) {
                   退勤時刻
                 </label>
                 <input
-                  type="datetime-local"
-                  value={fixDateTime}
-                  onChange={(e) => setFixDateTime(e.target.value)}
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="25:30"
+                  size={9}
+                  value={fixTime}
+                  onChange={(e) => setFixTime(e.target.value)}
                   disabled={fixSaving}
                   style={{
                     fontSize: "14px",
+                    fontFamily: "monospace",
                     padding: "4px 8px",
                     border: "1px solid #d1d5db",
                     borderRadius: "6px",
@@ -227,9 +252,7 @@ export function HomePage({ onNavigateHistory, onNavigateSettings }: Props) {
                 <button
                   onClick={submitFix}
                   disabled={
-                    fixSaving ||
-                    !fixDateTime ||
-                    (status.status === "on_break" && !fixBreakEndDateTime)
+                    fixSaving || !fixTime || (status.status === "on_break" && !fixBreakEndTime)
                   }
                   style={{
                     padding: "6px 14px",

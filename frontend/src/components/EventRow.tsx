@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { eventTypeLabel, extractTimeForInput, replaceTimeInTimestamp } from "../lib/formatters";
+import { buildExtendedTimestamp, eventTypeLabel, formatExtendedTime } from "../lib/formatters";
 import type { StampEvent } from "../types";
 
 interface EventRowProps {
@@ -16,8 +16,11 @@ export function EventRow({ event, onUpdate, onDelete }: EventRowProps) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // 勤務日の0時基準で表示・編集する（深夜勤務は 25:30:00 のような 24 時超え表記）
+  const displayTime = formatExtendedTime(event.date_key, event.timestamp);
+
   const startEdit = () => {
-    setEditValue(extractTimeForInput(event.timestamp));
+    setEditValue(displayTime);
     setError(null);
     setEditing(true);
     setTimeout(() => inputRef.current?.focus(), 0);
@@ -30,14 +33,17 @@ export function EventRow({ event, onUpdate, onDelete }: EventRowProps) {
 
   const confirmEdit = async () => {
     if (saving) return;
-    const original = extractTimeForInput(event.timestamp);
-    if (editValue === original) {
+    if (editValue === displayTime) {
       cancelEdit();
+      return;
+    }
+    const newTimestamp = buildExtendedTimestamp(event.date_key, editValue);
+    if (newTimestamp === null) {
+      setError("時刻は HH:MM または HH:MM:SS で入力してください（24時以降は 25:30 のように指定）");
       return;
     }
     setSaving(true);
     try {
-      const newTimestamp = replaceTimeInTimestamp(event.timestamp, editValue);
       await onUpdate(event.id, newTimestamp);
       setEditing(false);
       setError(null);
@@ -94,8 +100,11 @@ export function EventRow({ event, onUpdate, onDelete }: EventRowProps) {
         {editing ? (
           <input
             ref={inputRef}
-            type="time"
-            step="1"
+            type="text"
+            inputMode="numeric"
+            placeholder="25:30:00"
+            title="24時以降は 25:30 のように入力できます"
+            size={9}
             value={editValue}
             onChange={(e) => setEditValue(e.target.value)}
             onBlur={cancelEdit}
@@ -121,11 +130,7 @@ export function EventRow({ event, onUpdate, onDelete }: EventRowProps) {
               borderBottom: "1px dashed #d1d5db",
             }}
           >
-            {new Date(event.timestamp).toLocaleTimeString("ja-JP", {
-              hour: "2-digit",
-              minute: "2-digit",
-              second: "2-digit",
-            })}
+            {displayTime}
           </span>
         )}
         <span style={{ flex: 1 }}>{eventTypeLabel(event.event_type)}</span>

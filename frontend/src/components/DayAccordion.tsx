@@ -29,41 +29,88 @@ function formatDateLabel(dateKey: string): string {
   return `${Number(mStr)}/${Number(dStr)}(${w})`;
 }
 
-/** 当該イベント列の勤務分数を計算する。clock_out が無い場合は今日のみ「現在」を終端とする */
-function calcWorkMinutes(dateKey: string, events: StampEvent[]): number | null {
-  const clockIn = events.find((e) => e.event_type === "clock_in");
-  if (!clockIn) return null;
-  const lastClockOut = [...events].reverse().find((e) => e.event_type === "clock_out");
+interface WorkSession {
+  startMs: number;
+  /** 退勤済みなら退勤時刻。退勤漏れの場合は null */
+  endMs: number | null;
+  breakMs: number;
+  /** break_end が来ていない休憩の開始時刻 */
+  pendingBreakStartMs: number | null;
+}
 
-  const startMs = new Date(clockIn.timestamp).getTime();
-  let endMs: number | null = null;
-  if (lastClockOut) {
-    endMs = new Date(lastClockOut.timestamp).getTime();
-  } else {
-    const today = new Date();
-    const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-    if (dateKey === todayKey) {
-      endMs = Date.now();
-    } else {
-      return null;
-    }
-  }
+/**
+ * イベント列を「出勤〜退勤」のセッション単位に分割する。
+ * 1日に複数回の出退勤があっても、セッション間の空き時間を勤務時間に含めない
+ */
+function splitSessions(events: StampEvent[]): WorkSession[] {
+  const sessions: WorkSession[] = [];
+  let current: WorkSession | null = null;
 
-  let breakMs = 0;
-  let breakStart: number | null = null;
   for (const ev of events) {
-    if (ev.event_type === "break_start") {
-      breakStart = new Date(ev.timestamp).getTime();
-    } else if (ev.event_type === "break_end" && breakStart !== null) {
-      breakMs += new Date(ev.timestamp).getTime() - breakStart;
-      breakStart = null;
+    const ms = new Date(ev.timestamp).getTime();
+    if (Number.isNaN(ms)) continue;
+
+    switch (ev.event_type) {
+      case "clock_in":
+        // 退勤漏れのまま次の出勤が来た場合、前のセッションは未完了のまま残す
+        if (current) sessions.push(current);
+        current = { startMs: ms, endMs: null, breakMs: 0, pendingBreakStartMs: null };
+        break;
+      case "clock_out":
+        if (current) {
+          if (current.pendingBreakStartMs !== null) {
+            current.breakMs += Math.max(0, ms - current.pendingBreakStartMs);
+            current.pendingBreakStartMs = null;
+          }
+          current.endMs = ms;
+          sessions.push(current);
+          current = null;
+        }
+        break;
+      case "break_start":
+        if (current) current.pendingBreakStartMs = ms;
+        break;
+      case "break_end":
+        if (current && current.pendingBreakStartMs !== null) {
+          current.breakMs += Math.max(0, ms - current.pendingBreakStartMs);
+          current.pendingBreakStartMs = null;
+        }
+        break;
     }
   }
-  if (breakStart !== null) {
-    breakMs += Math.max(0, endMs - breakStart);
-  }
+  if (current) sessions.push(current);
 
-  const workMs = Math.max(0, endMs - startMs - breakMs);
+  return sessions;
+}
+
+/**
+ * 当該イベント列の勤務分数を計算する（全セッションの合計）。
+ * clock_out が無いセッションは、今日の最終セッションのときだけ「現在」を終端とする
+ */
+function calcWorkMinutes(dateKey: string, events: StampEvent[]): number | null {
+  const sessions = splitSessions(events);
+  if (sessions.length === 0) return null;
+
+  const today = new Date();
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  const fallbackEndMs = dateKey === todayKey ? Date.now() : null;
+
+  let workMs = 0;
+  let counted = false;
+
+  sessions.forEach((session, i) => {
+    const endMs = session.endMs ?? (i === sessions.length - 1 ? fallbackEndMs : null);
+    if (endMs === null) return;
+
+    let breakMs = session.breakMs;
+    if (session.pendingBreakStartMs !== null) {
+      breakMs += Math.max(0, endMs - session.pendingBreakStartMs);
+    }
+    workMs += Math.max(0, endMs - session.startMs - breakMs);
+    counted = true;
+  });
+
+  if (!counted) return null;
   return Math.round(workMs / 60000);
 }
 
